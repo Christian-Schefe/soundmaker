@@ -1834,9 +1834,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cpal",
+ "dyn-clone",
  "fundsp",
  "petgraph",
  "piston_window",
+ "rustfft",
  "typenum",
 ]
 

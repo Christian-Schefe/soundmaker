@@ -19,6 +19,7 @@ fn optimal4x44<T: Float>(a0: T, a1: T, a2: T, a3: T, x: T) -> T {
     (((c4 * z + c3) * z + c2) * z + c1) * z + c0
 }
 
+#[derive(Clone)]
 pub struct Wavetable {
     table: Vec<(f32, Vec<f32>)>,
 }
@@ -102,6 +103,7 @@ impl Wavetable {
     }
 }
 
+#[derive(Clone)]
 pub struct WavetableSynth {
     table: Wavetable,
     phase: f32,
