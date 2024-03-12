@@ -3,7 +3,8 @@ use std::{thread, time::Duration};
 use fundsp::prelude::*;
 use petgraph::Graph;
 use soundmaker::{
-    node::{AudioNode, Const, Envelope, Envelope0, GraphExtensions, NodeNetwork},
+    graph::NodeGraph,
+    node::{AudioNode, Const, Envelope, Envelope0, GraphExtensions, Mix},
     oscilloscope::render,
     output::playback,
     wavetable::{Wavetable, WavetableSynth},
@@ -36,18 +37,34 @@ fn main() {
 
     let mut graph: Graph<Box<dyn AudioNode>, _> = Graph::new();
 
-    let input = graph.add(Envelope0::new(|t| 440.0 * (-t * 0.0).exp()));
+    let freq = graph.add(Envelope0::new(|t| 110.0 * (-t * 0.0).exp()));
     let envelope = graph.add(Envelope::new(|t, x: &Frame<f64, U1>| {
-        let y = x[0].signum() * x[0].abs().sqrt();
-        (3.0 * y).clamp(-1.0, 1.0) * 0.5
-        // (x[0] * 10.0).round() / 10.0 * (-t * 0.1).exp()
+        x[0] * (-t * 0.02).exp() * (t * 20.0).min(1.0)
     }));
-    let synth = graph.add(triangle());
 
-    graph.add_edge(input, synth, (0, 0));
-    graph.add_edge(synth, envelope, (0, 0));
+    let vibrato = graph.add(Envelope::new(|t, x: &Frame<f64, U1>| {
+        let a = (t * 0.3).clamp(0.0, 1.0);
+        let ease = 1.0 - (1.0 - a) * (1.0 - a);
+        let factor = 1.0 + (t * PI * 2.0 * 5.0).sin() * 0.003 * ease;
+        x[0] * factor
+    }));
 
-    let net = NodeNetwork::from_graph(graph, input, envelope);
+    let synth = graph.add(sine() * 0.5);
+    let synth2 = graph.add(sine() * 0.5);
+
+    let mix = graph.add(Mix::<U2>::new());
+
+    graph.add_edge(freq, vibrato, (0, 0));
+
+    graph.add_edge(vibrato, synth, (0, 0));
+    graph.add_edge(vibrato, synth2, (0, 0));
+
+    graph.add_edge(synth, mix, (0, 0));
+    graph.add_edge(synth2, mix, (0, 1));
+
+    graph.add_edge(mix, envelope, (0, 0));
+
+    let net = NodeGraph::from_graph(graph, freq, envelope);
 
     let net2 = net.clone();
     thread::spawn(|| {
