@@ -122,6 +122,15 @@ impl WavetableSynth {
             sample_rate: DEFAULT_SR as f32,
         }
     }
+    pub fn with_initial_phase(table: Wavetable, initial_phase: f32) -> Self {
+        Self {
+            table,
+            phase: 0.0,
+            initial_phase,
+            table_hint: 0,
+            sample_rate: DEFAULT_SR as f32,
+        }
+    }
 }
 
 impl FixedAudioNode for WavetableSynth {
@@ -145,5 +154,54 @@ impl FixedAudioNode for WavetableSynth {
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate as f32;
+    }
+}
+
+#[derive(Clone)]
+pub struct MultiWavetableSynth {
+    synths: Vec<WavetableSynth>,
+    voices: usize,
+    detunes: Vec<f64>,
+}
+
+impl MultiWavetableSynth {
+    pub fn new(table: Wavetable, voices: usize) -> Self {
+        Self {
+            synths: (0..voices * 2 - 1)
+                .map(|x| WavetableSynth::with_initial_phase(table.clone(), rnd(x as i64) as f32))
+                .collect(),
+            voices,
+            detunes: (0..voices * 2 - 1)
+                .map(|x| 2.0 * rnd(x as i64) - 1.0)
+                .collect(),
+        }
+    }
+}
+
+impl FixedAudioNode for MultiWavetableSynth {
+    type Inputs = U1;
+    type Outputs = U1;
+
+    fn tick(&mut self, input: &[f64], output: &mut [f64]) {
+        output[0] = 0.0;
+        for i in 0..self.voices * 2 - 1 {
+            let synth = &mut self.synths[i];
+            let inp = [input[0] * (1.0 + self.detunes[i] * 0.02)];
+            let mut outp = [0.0];
+            synth.tick(&inp, &mut outp);
+            output[0] += outp[0];
+        }
+        output[0] /= self.voices as f64;
+        output[0] = output[0].clamp(-1.0, 1.0);
+    }
+
+    fn reset(&mut self) {
+        self.synths.iter_mut().for_each(|x| x.reset());
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.synths
+            .iter_mut()
+            .for_each(|x| x.set_sample_rate(sample_rate));
     }
 }

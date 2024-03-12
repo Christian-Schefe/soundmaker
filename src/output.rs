@@ -19,6 +19,7 @@ pub fn playback(sound: Box<dyn AudioNode>, duration: Duration) -> Result<(), any
         _ => panic!("Unsupported format"),
     }?;
 
+    std::thread::sleep(Duration::from_secs_f64(1.0));
     stream.play()?;
     std::thread::sleep(duration);
     Ok(())
