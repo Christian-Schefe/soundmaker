@@ -1,53 +1,151 @@
+use std::thread;
 use std::time::{Duration, Instant};
 
 use piston_window::*;
 use rustfft::num_complex::Complex32;
 use rustfft::num_traits::Zero;
 use rustfft::FftPlanner;
+use typenum::{U0, U1};
 
 use crate::node::AudioNode;
+use crate::output::playback;
+use crate::{Layer, Wave};
 
-pub fn render(node: Box<dyn AudioNode>, duration: Duration) {
-    let width = 800.0;
-    let height = 600.0;
+struct GlobalData {
+    width: f64,
+    height: f64,
+    sample_rate: f64,
+    start_time: Instant,
+}
 
-    let mut window: PistonWindow = WindowSettings::new("Oscilloscope View", [width, height])
-        .exit_on_esc(true)
-        .build()
-        .unwrap();
+impl GlobalData {
+    fn new(width: f64, height: f64, sample_rate: f64) -> Self {
+        Self {
+            width,
+            height,
+            sample_rate,
+            start_time: Instant::now(),
+        }
+    }
+    fn current_time(&self) -> f64 {
+        self.start_time.elapsed().as_secs_f64()
+    }
+}
 
-    let sample_rate = 44100.0;
-    let data = compute_data(node, sample_rate, duration);
-    let start_time = Instant::now();
-    let buffer_size = 4096;
-    let data: Vec<f64> = vec![0.0; buffer_size * 2].into_iter().chain(data).collect();
+struct ChannelData {
+    data: Vec<f64>,
+    position: (f64, f64, f64, f64),
+    buffer_size: usize,
+    zoom: f64,
+    prev: (usize, Vec<Complex32>),
+}
 
-    let zoom = 0.5;
+impl ChannelData {
+    fn new(data: Vec<f64>, position: (f64, f64, f64, f64), buffer_size: usize, zoom: f64) -> Self {
+        Self {
+            data: vec![0.0; buffer_size * 2].into_iter().chain(data).collect(),
+            position,
+            buffer_size,
+            zoom,
+            prev: (0, vec![Complex32::zero(); buffer_size]),
+        }
+    }
+}
 
-    let mut prev = (buffer_size, vec![Complex32::zero(); buffer_size]);
+pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64, duration: Duration) {
+    let mut global_data = GlobalData::new(800.0, 600.0, sample_rate);
+    channels
+        .iter_mut()
+        .for_each(|x| x.set_sample_rate(sample_rate));
+
+    let mut window: PistonWindow =
+        WindowSettings::new("Oscilloscope View", [global_data.width, global_data.height])
+            .exit_on_esc(true)
+            .build()
+            .unwrap();
+
+    let y_fac = 1.0 / channels.len() as f64;
+
+    let mut channel_data: Vec<ChannelData> = channels
+        .clone()
+        .into_iter()
+        .map(|x| Wave::render(x, global_data.sample_rate, duration))
+        .enumerate()
+        .map(|(i, x)| {
+            ChannelData::new(
+                x.data,
+                (0.0, 1.0, i as f64 * y_fac, (i + 1) as f64 * y_fac),
+                4096,
+                0.5,
+            )
+        })
+        .collect();
+
+    let playback_mix = Layer::<U0, U1>::new(channels.clone());
+    // let playback_wave = Wave::render(Box::new(playback_mix), global_data.sample_rate, duration);
+
+    thread::spawn(move || {
+        playback(Box::new(playback_mix), duration).unwrap();
+    });
+
+    global_data.start_time = Instant::now();
 
     while let Some(event) = window.next() {
         window.draw_2d(&event, |c, g, _| {
-            clear([1.0; 4], g);
+            clear([0.0, 0.0, 0.0, 1.0], g);
 
-            let current_time = start_time.elapsed().as_secs_f64();
-            let index = (buffer_size * 2 + (current_time * sample_rate) as usize).min(data.len());
-
-            find_best_i(&data, &mut prev, index, buffer_size);
-
-            let center = prev.0 - buffer_size / 2;
-            let offset = (buffer_size as f64 * zoom * 0.5) as usize;
-
-            render_samples(&data[center - offset..center + offset], width, height, c, g);
+            let current_time = global_data.current_time();
+            channel_data
+                .iter_mut()
+                .for_each(|x| render_track(&global_data, x, current_time, c, g))
         });
     }
+}
+
+fn render_track<G>(
+    global_data: &GlobalData,
+    channel_data: &mut ChannelData,
+    current_time: f64,
+    c: Context,
+    g: &mut G,
+) where
+    G: Graphics,
+{
+    let buffer_size = channel_data.buffer_size;
+    let index = (channel_data.buffer_size * 2 + (current_time * global_data.sample_rate) as usize)
+        .min(channel_data.data.len());
+
+    find_best_i(
+        &channel_data.data,
+        &mut channel_data.prev,
+        index,
+        buffer_size,
+    );
+
+    let center = channel_data.prev.0 - buffer_size / 2;
+    let offset = (buffer_size as f64 * channel_data.zoom * 0.5) as usize;
+
+    let rect = (
+        channel_data.position.0 * global_data.width,
+        channel_data.position.2 * global_data.height,
+        channel_data.position.1 * global_data.width - channel_data.position.0 * global_data.width,
+        channel_data.position.3 * global_data.height - channel_data.position.2 * global_data.height,
+    );
+
+    render_samples(
+        &channel_data.data[center - offset..center + offset],
+        rect,
+        c,
+        g,
+    );
 }
 
 fn find_best_i(data: &[f64], prev: &mut (usize, Vec<Complex32>), cur: usize, length: usize) {
     let mut best = None;
 
     let step_size = 30;
-    for offset in 0..length / (step_size * 2) {
+    let steps = length / (step_size * 2);
+    for offset in 0..steps {
         let index = cur - (offset * step_size);
 
         let spectrum = perform_fft(&data[index - length..index]);
@@ -78,16 +176,6 @@ fn find_best_i(data: &[f64], prev: &mut (usize, Vec<Complex32>), cur: usize, len
     *prev = best.map(|x| (x.0, x.2)).unwrap();
 }
 
-fn compute_data(mut node: Box<dyn AudioNode>, sample_rate: f64, duration: Duration) -> Vec<f64> {
-    let samples = (sample_rate * duration.as_secs_f64()).round() as usize;
-
-    let mut data = Vec::with_capacity(samples);
-    for _i in 0..samples {
-        data.push(node.get_stereo().0);
-    }
-    data
-}
-
 fn cross_correlation(prev_spectrum: &[Complex32], spectrum: &[Complex32]) -> f32 {
     let mut cross_correlation = 0.0;
     let window_size = prev_spectrum.len().min(spectrum.len());
@@ -115,12 +203,15 @@ fn perform_fft(samples: &[f64]) -> Vec<Complex32> {
     spectrum
 }
 
-fn render_samples<G>(samples: &[f64], width: f64, height: f64, c: Context, g: &mut G)
+fn render_samples<G>(samples: &[f64], rect: (f64, f64, f64, f64), c: Context, g: &mut G)
 where
     G: Graphics,
 {
-    let points = space_samples(samples, width, height);
-    let line = Line::new([0.0, 0.0, 0.0, 1.0], 1.0);
+    let points = space_samples(samples, rect.2, rect.3)
+        .into_iter()
+        .map(|(x, y)| (x + rect.0, y + rect.1))
+        .collect();
+    let line = Line::new([1.0, 1.0, 1.0, 1.0], 1.0);
 
     draw_lines(points, line, c, g)
 }

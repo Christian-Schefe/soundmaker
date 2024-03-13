@@ -11,6 +11,7 @@ pub fn playback(sound: Box<dyn AudioNode>, duration: Duration) -> Result<(), any
         .default_output_device()
         .expect("No default output device");
     let config = device.default_output_config().unwrap();
+    println!("Sample Rate: {:?}", config.sample_rate());
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), sound),
@@ -19,7 +20,6 @@ pub fn playback(sound: Box<dyn AudioNode>, duration: Duration) -> Result<(), any
         _ => panic!("Unsupported format"),
     }?;
 
-    std::thread::sleep(Duration::from_secs_f64(1.0));
     stream.play()?;
     std::thread::sleep(duration);
     Ok(())

@@ -104,7 +104,7 @@ impl Wavetable {
 }
 
 #[derive(Clone)]
-pub struct WavetableSynth {
+pub struct WaveSynth {
     table: Wavetable,
     phase: f32,
     initial_phase: f32,
@@ -112,7 +112,7 @@ pub struct WavetableSynth {
     sample_rate: f32,
 }
 
-impl WavetableSynth {
+impl WaveSynth {
     pub fn new(table: Wavetable) -> Self {
         Self {
             table,
@@ -133,7 +133,7 @@ impl WavetableSynth {
     }
 }
 
-impl FixedAudioNode for WavetableSynth {
+impl FixedAudioNode for WaveSynth {
     type Inputs = U1;
     type Outputs = U1;
     fn tick(&mut self, input: &[f64], output: &mut [f64]) {
@@ -159,7 +159,7 @@ impl FixedAudioNode for WavetableSynth {
 
 #[derive(Clone)]
 pub struct MultiWavetableSynth {
-    synths: Vec<WavetableSynth>,
+    synths: Vec<WaveSynth>,
     voices: usize,
     detunes: Vec<f64>,
 }
@@ -168,7 +168,7 @@ impl MultiWavetableSynth {
     pub fn new(table: Wavetable, voices: usize) -> Self {
         Self {
             synths: (0..voices * 2 - 1)
-                .map(|x| WavetableSynth::with_initial_phase(table.clone(), rnd(x as i64) as f32))
+                .map(|x| WaveSynth::with_initial_phase(table.clone(), rnd(x as i64) as f32))
                 .collect(),
             voices,
             detunes: (0..voices * 2 - 1)
@@ -204,4 +204,100 @@ impl FixedAudioNode for MultiWavetableSynth {
             .iter_mut()
             .for_each(|x| x.set_sample_rate(sample_rate));
     }
+}
+
+pub fn saw_table() -> Wavetable {
+    Wavetable::new(
+        20.0,
+        20_000.0,
+        4.0,
+        &|i| if (i & 1) == 1 { 0.0 } else { 0.5 },
+        &|_, i| 1.0 / i as f64,
+    )
+}
+
+pub fn square_table() -> Wavetable {
+    Wavetable::new(20.0, 20_000.0, 4.0, &|_| 0.0, &|_, i| {
+        if (i & 1) == 1 {
+            1.0 / i as f64
+        } else {
+            0.0
+        }
+    })
+}
+
+pub fn triangle_table() -> Wavetable {
+    Wavetable::new(
+        20.0,
+        20_000.0,
+        4.0,
+        &|i| if (i & 3) == 3 { 0.5 } else { 0.0 },
+        &|_, i| {
+            if (i & 1) == 1 {
+                1.0 / (i * i) as f64
+            } else {
+                0.0
+            }
+        },
+    )
+}
+
+pub fn organ_table() -> Wavetable {
+    Wavetable::new(
+        20.0,
+        20_000.0,
+        4.0,
+        &|i| {
+            if (i & 3) == 3 {
+                0.5
+            } else if (i & 1) == 1 {
+                0.0
+            } else {
+                0.5
+            }
+        },
+        &|_, i| {
+            let z = i.trailing_zeros();
+            let j = i >> z;
+            1.0 / (i + j * j * j) as f64
+        },
+    )
+}
+
+pub fn soft_saw_table() -> Wavetable {
+    Wavetable::new(
+        20.0,
+        20_000.0,
+        4.0,
+        &|i| {
+            if (i & 3) == 3 {
+                0.5
+            } else if (i & 1) == 1 {
+                0.0
+            } else {
+                0.5
+            }
+        },
+        &|_, i| 1.0 / (i * i) as f64,
+    )
+}
+
+pub fn hammond_table() -> Wavetable {
+    Wavetable::new(20.0, 20_000.0, 4.0, &|_| 0.0, &|_, i| {
+        let z = i.trailing_zeros();
+        let j = i >> z;
+        let f = 1.0 / ((z + 1) * (z + 1)) as f64;
+        match i {
+            1 => return 1.0,
+            2 => return 1.0,
+            3 => return 1.0,
+            _ => (),
+        }
+        match j {
+            1 => f,
+            3 => f,
+            9 => 0.2 * f,
+            _ => 0.0,
+        }
+    })
 }
