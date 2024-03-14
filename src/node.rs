@@ -1,19 +1,18 @@
 use std::marker::PhantomData;
 
+use crate::prelude::{U0, U1};
 use dyn_clone::DynClone;
 use fundsp::{
     prelude::{lerp, Frame, Size},
     DEFAULT_SR,
 };
-use petgraph::{prelude::*, stable_graph::IndexType, EdgeType};
-use typenum::{U0, U1};
 
 pub trait AudioNode: Send + Sync + DynClone {
     fn tick(&mut self, input: &[f64], output: &mut [f64]);
 
-    fn reset(&mut self);
+    fn reset(&mut self) {}
 
-    fn set_sample_rate(&mut self, _sample_rate: f64);
+    fn set_sample_rate(&mut self, _sample_rate: f64) {}
 
     fn inputs(&self) -> usize;
 
@@ -46,9 +45,9 @@ pub trait FixedAudioNode: Send + Sync + DynClone {
 
     fn tick(&mut self, input: &[f64], output: &mut [f64]);
 
-    fn reset(&mut self);
+    fn reset(&mut self) {}
 
-    fn set_sample_rate(&mut self, _sample_rate: f64);
+    fn set_sample_rate(&mut self, _sample_rate: f64) {}
 }
 
 impl<I: Size<f64>, O: Size<f64>, T: FixedAudioNode<Inputs = I, Outputs = O>> AudioNode for T {
@@ -72,25 +71,6 @@ impl<I: Size<f64>, O: Size<f64>, T: FixedAudioNode<Inputs = I, Outputs = O>> Aud
         self.set_sample_rate(sample_rate)
     }
 }
-
-// impl<I: Size<f64>, O: Size<f64>, T> FixedAudioNode for T
-// where
-//     T: fundsp::prelude::AudioNode<Sample = f64, Inputs = I, Outputs = O>,
-// {
-//     type Inputs = I;
-//     type Outputs = O;
-//     fn tick(&mut self, input: &[f64], output: &mut [f64]) {
-//         output.copy_from_slice(self.tick(&Frame::from_slice(input)).as_slice());
-//     }
-
-//     fn set_sample_rate(&mut self, sample_rate: f64) {
-//         self.set_sample_rate(sample_rate)
-//     }
-
-//     fn reset(&mut self) {
-//         self.reset()
-//     }
-// }
 
 impl<I: Size<f64>, O: Size<f64>, T> FixedAudioNode for fundsp::prelude::An<T>
 where
@@ -120,10 +100,6 @@ impl FixedAudioNode for Const {
     fn tick(&mut self, _input: &[f64], output: &mut [f64]) {
         output[0] = self.0;
     }
-
-    fn reset(&mut self) {}
-
-    fn set_sample_rate(&mut self, _sample_rate: f64) {}
 }
 
 #[derive(Clone)]
@@ -219,77 +195,75 @@ where
     }
 }
 
-#[derive(Clone, Default)]
-pub struct Mix<I>(bool, PhantomData<I>)
+#[derive(Clone)]
+pub struct Fold<OP>(Box<dyn AudioNode>, OP)
 where
-    I: Size<f64>;
+    OP: Fn(f64, f64) -> f64;
 
-impl<I> Mix<I>
+impl<OP> Fold<OP>
 where
-    I: Size<f64>,
+    OP: Fn(f64, f64) -> f64,
 {
-    pub fn sum() -> Self {
-        Self(true, PhantomData)
-    }
-    pub fn mul() -> Self {
-        Self(false, PhantomData)
+    pub fn new(node: Box<dyn AudioNode>, op: OP) -> Self {
+        Self(node, op)
     }
 }
 
-impl<I> FixedAudioNode for Mix<I>
+impl<OP> AudioNode for Fold<OP>
 where
-    I: Size<f64>,
+    OP: Fn(f64, f64) -> f64 + Send + Sync + Clone,
 {
-    type Inputs = I;
-    type Outputs = U1;
     fn tick(&mut self, input: &[f64], output: &mut [f64]) {
-        output[0] = if self.0 {
-            input.iter().sum()
-        } else {
-            input.iter().product()
-        }
+        let num = self.0.outputs();
+        let mut buffer = vec![0.0; num];
+        self.0.tick(input, &mut buffer);
+        output[0] = buffer.into_iter().reduce(|x, a| (self.1)(x, a)).unwrap();
     }
 
-    fn reset(&mut self) {}
+    fn inputs(&self) -> usize {
+        self.0.inputs()
+    }
 
-    fn set_sample_rate(&mut self, _sample_rate: f64) {}
+    fn outputs(&self) -> usize {
+        1
+    }
 }
 
 #[derive(Clone, Default)]
-pub struct Layer<I, O>(Vec<Box<dyn AudioNode>>, PhantomData<I>, PhantomData<O>)
-where
-    I: Size<f64>,
-    O: Size<f64>;
+pub struct Layer(Vec<Box<dyn AudioNode>>, usize, usize);
 
-impl<I, O> Layer<I, O>
-where
-    I: Size<f64>,
-    O: Size<f64>,
-{
+impl Layer {
     pub fn new(layers: Vec<Box<dyn AudioNode>>) -> Self {
-        Self(layers, PhantomData, PhantomData)
+        let inp = layers[0].inputs();
+        let outp = layers[0].inputs();
+        assert!(layers
+            .iter()
+            .find(|x| x.inputs() != inp || x.outputs() != outp)
+            .is_none());
+        Self(layers, inp, outp)
     }
 }
 
-impl<I, O> FixedAudioNode for Layer<I, O>
-where
-    I: Size<f64>,
-    O: Size<f64>,
-{
-    type Inputs = I;
-    type Outputs = O;
+impl AudioNode for Layer {
     fn tick(&mut self, input: &[f64], output: &mut [f64]) {
-        let mut acc = 0.0;
+        let outputs = self.outputs();
+        let mut acc = vec![0.0; outputs];
         for node in self.0.iter_mut() {
             node.tick(input, output);
-            acc += output[0];
+            for i in 0..outputs {
+                acc[i] += output[i];
+            }
         }
-        output[0] = acc
+        output.copy_from_slice(&acc);
     }
 
-    fn reset(&mut self) {}
+    fn inputs(&self) -> usize {
+        self.1
+    }
 
-    fn set_sample_rate(&mut self, _sample_rate: f64) {}
+    fn outputs(&self) -> usize {
+        self.2
+    }
 }
 
 #[derive(Clone)]
@@ -421,9 +395,58 @@ impl AudioNode for Pipeline {
         output.copy_from_slice(&prev_output);
     }
 
-    fn reset(&mut self) {}
+    fn inputs(&self) -> usize {
+        self.1
+    }
 
-    fn set_sample_rate(&mut self, _sample_rate: f64) {}
+    fn outputs(&self) -> usize {
+        self.2
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct Stack(Vec<Box<dyn AudioNode>>, usize, usize);
+
+impl Stack {
+    pub fn new(steps: Vec<Box<dyn AudioNode>>) -> Self {
+        let inputs = steps.iter().map(|x| x.inputs()).sum();
+        let outputs = steps.iter().map(|x| x.outputs()).sum();
+        Self(steps, inputs, outputs)
+    }
+    pub fn wrap<T>(node: T) -> Self
+    where
+        T: AudioNode + 'static,
+    {
+        Self::new(vec![Box::new(node)])
+    }
+    pub fn add<T>(mut self, node: T) -> Self
+    where
+        T: AudioNode + 'static,
+    {
+        self.2 = node.outputs();
+        self.0.push(Box::new(node));
+        self
+    }
+}
+
+impl AudioNode for Stack {
+    fn tick(&mut self, input: &[f64], output: &mut [f64]) {
+        let mut in_off = 0;
+        let mut out_off = 0;
+        for i in 0..self.0.len() {
+            let node = self.0.get_mut(i).unwrap();
+            let inp = node.inputs();
+            let outp = node.outputs();
+
+            node.tick(
+                &input[in_off..in_off + inp],
+                &mut output[out_off..out_off + outp],
+            );
+
+            in_off += inp;
+            out_off += inp;
+        }
+    }
 
     fn inputs(&self) -> usize {
         self.1
@@ -449,20 +472,22 @@ impl<T: Size<f64>> FixedAudioNode for Pass<T> {
     fn tick(&mut self, input: &[f64], output: &mut [f64]) {
         output.copy_from_slice(&input);
     }
-
-    fn reset(&mut self) {}
-
-    fn set_sample_rate(&mut self, _sample_rate: f64) {}
 }
 
-pub trait GraphExtensions<N, Ix> {
-    fn add(&mut self, node: N) -> NodeIndex<Ix>;
+impl FixedAudioNode for f64 {
+    type Inputs = U0;
+    type Outputs = U1;
+
+    fn tick(&mut self, _input: &[f64], output: &mut [f64]) {
+        output[0] = *self;
+    }
 }
 
-impl<N: AudioNode + 'static, E, Ty: EdgeType, Ix: IndexType> GraphExtensions<N, Ix>
-    for Graph<Box<dyn AudioNode>, E, Ty, Ix>
-{
-    fn add(&mut self, node: N) -> NodeIndex<Ix> {
-        self.add_node(Box::new(node))
+impl FixedAudioNode for f32 {
+    type Inputs = U0;
+    type Outputs = U1;
+
+    fn tick(&mut self, _input: &[f64], output: &mut [f64]) {
+        output[0] = *self as f64;
     }
 }

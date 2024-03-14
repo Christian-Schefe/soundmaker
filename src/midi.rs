@@ -65,7 +65,11 @@ impl MidiPlayer {
     fn consume_message(&mut self, msg: MidiMessage) {
         match msg {
             MidiMessage::NoteOn { key, vel } => {
-                self.currently_playing = (key.as_int(), 127.0 / vel.as_int() as f64, true)
+                if vel == 0 {
+                    self.currently_playing.2 = false;
+                } else {
+                    self.currently_playing = (key.as_int(), 127.0 / vel.as_int() as f64, true)
+                }
             }
             MidiMessage::NoteOff { key, vel: _ } => {
                 if key == self.currently_playing.0 {

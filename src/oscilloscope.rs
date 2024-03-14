@@ -1,5 +1,5 @@
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use piston_window::*;
 use rustfft::num_complex::Complex32;
@@ -7,9 +7,7 @@ use rustfft::num_traits::Zero;
 use rustfft::FftPlanner;
 use typenum::{U0, U1};
 
-use crate::node::AudioNode;
-use crate::output::playback;
-use crate::{Layer, Wave};
+use crate::prelude::{playback, AudioNode, Layer, Wave};
 
 struct GlobalData {
     width: f64,
@@ -52,17 +50,17 @@ impl ChannelData {
     }
 }
 
-pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64, duration: Duration) {
+pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64) {
     let mut global_data = GlobalData::new(800.0, 600.0, sample_rate);
     channels
         .iter_mut()
         .for_each(|x| x.set_sample_rate(sample_rate));
 
-    let mut window: PistonWindow =
-        WindowSettings::new("Oscilloscope View", [global_data.width, global_data.height])
-            .exit_on_esc(true)
-            .build()
-            .unwrap();
+    let playback_mix = Layer::new(channels.clone());
+    let playback_wave = Wave::render_to_silence(Box::new(playback_mix), global_data.sample_rate);
+    let duration = playback_wave.length;
+
+    println!("duration: {}", duration.as_secs_f32());
 
     let y_fac = 1.0 / channels.len() as f64;
 
@@ -81,11 +79,14 @@ pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64, duration:
         })
         .collect();
 
-    let playback_mix = Layer::<U0, U1>::new(channels.clone());
-    // let playback_wave = Wave::render(Box::new(playback_mix), global_data.sample_rate, duration);
+    let mut window: PistonWindow =
+        WindowSettings::new("Oscilloscope View", [global_data.width, global_data.height])
+            .exit_on_esc(true)
+            .build()
+            .unwrap();
 
     thread::spawn(move || {
-        playback(Box::new(playback_mix), duration).unwrap();
+        playback(Box::new(playback_wave), duration).unwrap();
     });
 
     global_data.start_time = Instant::now();
@@ -115,7 +116,7 @@ fn render_track<G>(
     let index = (channel_data.buffer_size * 2 + (current_time * global_data.sample_rate) as usize)
         .min(channel_data.data.len());
 
-    find_best_i(
+    find_best_window(
         &channel_data.data,
         &mut channel_data.prev,
         index,
@@ -140,37 +141,30 @@ fn render_track<G>(
     );
 }
 
-fn find_best_i(data: &[f64], prev: &mut (usize, Vec<Complex32>), cur: usize, length: usize) {
+fn find_best_window(data: &[f64], prev: &mut (usize, Vec<Complex32>), cur: usize, length: usize) {
     let mut best = None;
+
+    let update_best = |index, best: &mut Option<(usize, f32, Vec<Complex32>)>| {
+        let spectrum = perform_fft(&data[index - length..index]);
+        let score = cross_correlation(&prev.1, &spectrum);
+
+        if best.is_none() || best.as_ref().is_some_and(|x| x.1 < score) {
+            *best = Some((index, score, spectrum))
+        }
+    };
 
     let step_size = 30;
     let steps = length / (step_size * 2);
     for offset in 0..steps {
         let index = cur - (offset * step_size);
-
-        let spectrum = perform_fft(&data[index - length..index]);
-        let cross_corr = cross_correlation(&prev.1, &spectrum);
-
-        best = match best {
-            None => Some((index, cross_corr, spectrum)),
-            Some((_, c, _)) if c < cross_corr => Some((index, cross_corr, spectrum)),
-            Some(x) => Some(x),
-        }
+        update_best(index, &mut best);
     }
 
     let cur = best.as_ref().unwrap().0;
 
     for offset in 0..step_size * 2 {
         let index = cur + step_size - offset;
-
-        let spectrum = perform_fft(&data[index - length..index]);
-        let cross_corr = cross_correlation(&prev.1, &spectrum);
-
-        best = match best {
-            None => Some((index, cross_corr, spectrum)),
-            Some((_, c, _)) if c < cross_corr => Some((index, cross_corr, spectrum)),
-            Some(x) => Some(x),
-        }
+        update_best(index, &mut best);
     }
 
     *prev = best.map(|x| (x.0, x.2)).unwrap();

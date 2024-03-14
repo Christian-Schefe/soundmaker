@@ -1,7 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::node::AudioNode;
-use petgraph::{stable_graph::NodeIndex, *};
+use petgraph::{
+    stable_graph::{EdgeIndex, NodeIndex},
+    Directed, Direction, Graph,
+};
+use typenum::Unsigned;
+
+pub type AudioGraph = Graph<Box<dyn AudioNode>, (usize, usize), Directed, u32>;
 
 #[derive(Clone)]
 pub struct NodeGraph {
@@ -9,16 +15,12 @@ pub struct NodeGraph {
     outputs: usize,
     source: NodeIndex,
     sink: NodeIndex,
-    graph: Graph<Box<dyn AudioNode>, (usize, usize)>,
+    graph: AudioGraph,
     execution_order: Vec<NodeIndex>,
 }
 
 impl NodeGraph {
-    pub fn from_graph(
-        graph: Graph<Box<dyn AudioNode>, (usize, usize)>,
-        source: NodeIndex,
-        sink: NodeIndex,
-    ) -> Self {
+    pub fn from_graph(graph: AudioGraph, source: NodeIndex, sink: NodeIndex) -> Self {
         let inputs = graph[source].inputs();
         let outputs = graph[sink].outputs();
         let node_count = graph.node_count();
@@ -63,12 +65,9 @@ impl NodeGraph {
             outgoing.for_each(|x| q.push_back(x));
         }
 
-        println!("{:?}", weights);
         let mut order: Vec<(NodeIndex, usize)> = weights.into_iter().collect();
         order.sort_by(|a, b| a.1.cmp(&b.1));
         self.execution_order = order.into_iter().map(|x| x.0).collect();
-
-        println!("{:?}", self.execution_order);
     }
 }
 
@@ -80,7 +79,7 @@ impl AudioNode for NodeGraph {
         for &node in self.execution_order.iter() {
             let node_box = &self.graph[node];
             let mut out_buffer = vec![0.0; node_box.outputs()];
-            
+
             if node == self.source {
                 self.graph[node].tick(input, &mut out_buffer);
             } else {
@@ -123,5 +122,74 @@ impl AudioNode for NodeGraph {
         self.graph
             .node_indices()
             .for_each(|x| self.graph[x].set_sample_rate(sample_rate))
+    }
+}
+
+#[derive(Clone)]
+pub struct GraphBuilder {
+    graph: AudioGraph,
+    source: Option<NodeIndex>,
+    sink: Option<NodeIndex>,
+}
+
+impl GraphBuilder {
+    pub fn new() -> Self {
+        Self {
+            graph: AudioGraph::new(),
+            sink: None,
+            source: None,
+        }
+    }
+    pub fn set_out(mut self, sink: NodeIndex) -> Self {
+        self.sink = Some(sink);
+        self
+    }
+    pub fn set_in(mut self, source: NodeIndex) -> Self {
+        self.source = Some(source);
+        self
+    }
+    pub fn add_node(&mut self, node: Box<dyn AudioNode>) -> NodeIndex {
+        self.graph.add_node(node)
+    }
+    pub fn add_edge(&mut self, from: (NodeIndex, usize), to: (NodeIndex, usize)) -> EdgeIndex {
+        self.graph.add_edge(from.0, to.0, (from.1, to.1))
+    }
+    pub fn add<N>(&mut self, node: N) -> NodeIndex
+    where
+        N: AudioNode + 'static,
+    {
+        self.graph.add_node(Box::new(node))
+    }
+
+    pub fn add_const(&mut self, node: NodeIndex, input: usize, val: f64) -> NodeIndex {
+        let constant = self.graph.add_node(Box::new(val));
+        self.graph.add_edge(constant, node, (0, input));
+        constant
+    }
+
+    pub fn connect(&mut self, from: NodeIndex, to: NodeIndex) {
+        let a_out = self.graph[from].outputs();
+        let b_in = self.graph[to].inputs();
+        assert_eq!(a_out, b_in);
+        for i in 0..a_out {
+            self.graph.add_edge(from, to, (i, i));
+        }
+    }
+
+    pub fn edge<I: Unsigned, O: Unsigned>(&mut self, from: NodeIndex, to: NodeIndex) {
+        self.graph
+            .add_edge(from, to, (I::to_usize(), O::to_usize()));
+    }
+
+    pub fn to_0(&mut self, from: NodeIndex, to: NodeIndex, input: usize) {
+        self.graph.add_edge(from, to, (input, 0));
+    }
+
+    pub fn from_0(&mut self, from: NodeIndex, to: NodeIndex, output: usize) {
+        self.graph.add_edge(from, to, (0, output));
+    }
+
+    pub fn build(self) -> NodeGraph {
+        NodeGraph::from_graph(self.graph, self.source.unwrap(), self.sink.unwrap())
     }
 }
