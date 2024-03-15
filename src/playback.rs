@@ -1,22 +1,34 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, Stream};
+use fundsp::prelude::AudioNode;
+use fundsp::wave::{Wave64, Wave64Player};
 
-use crate::node::AudioNode;
+pub fn play_data(data: Vec<f64>, sample_rate: f64) -> Result<(), anyhow::Error> {
+    let wave = Arc::new(Wave64::from_samples(sample_rate, &data));
+    let player = Wave64Player::new(&wave, 0, 0, wave.length(), None);
+    play_sound(player, Duration::from_secs_f64(wave.duration()))
+}
 
-pub fn playback(sound: Box<dyn AudioNode>, duration: Duration) -> Result<(), anyhow::Error> {
+pub fn play_sound<T>(mut sound: T, duration: Duration) -> Result<(), anyhow::Error>
+where
+    T: AudioNode<Sample = f64> + 'static,
+{
     let host = cpal::default_host();
     let device = host
         .default_output_device()
         .expect("No default output device");
     let config = device.default_output_config().unwrap();
-    println!("Sample Rate: {:?}", config.sample_rate());
+    let sample_rate = config.sample_rate();
+    println!("Sample Rate: {:?}", sample_rate);
+    sound.set_sample_rate(sample_rate.0 as f64);
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), sound),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), sound),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), sound),
+        cpal::SampleFormat::F32 => run::<f32, _>(&device, &config.into(), sound),
+        cpal::SampleFormat::I16 => run::<i16, _>(&device, &config.into(), sound),
+        cpal::SampleFormat::U16 => run::<u16, _>(&device, &config.into(), sound),
         _ => panic!("Unsupported format"),
     }?;
 
@@ -25,13 +37,14 @@ pub fn playback(sound: Box<dyn AudioNode>, duration: Duration) -> Result<(), any
     Ok(())
 }
 
-fn run<T>(
+fn run<T, Q>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    mut sound: Box<dyn AudioNode>,
+    mut sound: Q,
 ) -> Result<Stream, anyhow::Error>
 where
     T: SizedSample + FromSample<f64>,
+    Q: AudioNode<Sample = f64> + 'static,
 {
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;

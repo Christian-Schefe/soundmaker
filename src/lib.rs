@@ -1,10 +1,4 @@
-pub mod fm;
-pub mod graph;
-pub mod midi;
-pub mod node;
 pub mod oscilloscope;
-pub mod output;
-pub mod prelude;
+pub mod playback;
 pub mod score;
-pub mod wave;
-pub mod wavetable;
+pub mod daw;

@@ -1,13 +1,14 @@
 use std::thread;
 use std::time::Instant;
 
+use fundsp::prelude::{lerp, lerp11};
 use piston_window::*;
 use rustfft::num_complex::Complex32;
 use rustfft::num_traits::Zero;
 use rustfft::FftPlanner;
-use typenum::{U0, U1};
 
-use crate::prelude::{playback, AudioNode, Layer, Wave};
+use crate::daw::DAW;
+use crate::playback::play_data;
 
 struct GlobalData {
     width: f64,
@@ -41,7 +42,11 @@ struct ChannelData {
 impl ChannelData {
     fn new(data: Vec<f64>, position: (f64, f64, f64, f64), buffer_size: usize, zoom: f64) -> Self {
         Self {
-            data: vec![0.0; buffer_size * 2].into_iter().chain(data).collect(),
+            data: vec![0.0; buffer_size * 2]
+                .into_iter()
+                .chain(data)
+                .chain(vec![0.0; buffer_size * 2])
+                .collect(),
             position,
             buffer_size,
             zoom,
@@ -50,28 +55,21 @@ impl ChannelData {
     }
 }
 
-pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64) {
+pub fn render(mut daw: DAW, sample_rate: f64) {
     let mut global_data = GlobalData::new(800.0, 600.0, sample_rate);
-    channels
-        .iter_mut()
-        .for_each(|x| x.set_sample_rate(sample_rate));
 
-    let playback_mix = Layer::new(channels.clone());
-    let playback_wave = Wave::render_to_silence(Box::new(playback_mix), global_data.sample_rate);
-    let duration = playback_wave.length;
+    let (duration, mix_wave, channel_waves) = daw.render_waves(sample_rate);
 
     println!("duration: {}", duration.as_secs_f32());
 
-    let y_fac = 1.0 / channels.len() as f64;
+    let y_fac = 1.0 / daw.channel_count as f64;
 
-    let mut channel_data: Vec<ChannelData> = channels
-        .clone()
+    let mut channel_data: Vec<ChannelData> = channel_waves
         .into_iter()
-        .map(|x| Wave::render(x, global_data.sample_rate, duration))
         .enumerate()
         .map(|(i, x)| {
             ChannelData::new(
-                x.data,
+                x,
                 (0.0, 1.0, i as f64 * y_fac, (i + 1) as f64 * y_fac),
                 4096,
                 0.5,
@@ -86,7 +84,7 @@ pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64) {
             .unwrap();
 
     thread::spawn(move || {
-        playback(Box::new(playback_wave), duration).unwrap();
+        play_data(mix_wave, sample_rate).unwrap();
     });
 
     global_data.start_time = Instant::now();
@@ -95,7 +93,7 @@ pub fn render(mut channels: Vec<Box<dyn AudioNode>>, sample_rate: f64) {
         window.draw_2d(&event, |c, g, _| {
             clear([0.0, 0.0, 0.0, 1.0], g);
 
-            let current_time = global_data.current_time();
+            let current_time = global_data.current_time().min(duration.as_secs_f64());
             channel_data
                 .iter_mut()
                 .for_each(|x| render_track(&global_data, x, current_time, c, g))
@@ -126,16 +124,11 @@ fn render_track<G>(
     let center = channel_data.prev.0 - buffer_size / 2;
     let offset = (buffer_size as f64 * channel_data.zoom * 0.5) as usize;
 
-    let rect = (
-        channel_data.position.0 * global_data.width,
-        channel_data.position.2 * global_data.height,
-        channel_data.position.1 * global_data.width - channel_data.position.0 * global_data.width,
-        channel_data.position.3 * global_data.height - channel_data.position.2 * global_data.height,
-    );
-
     render_samples(
         &channel_data.data[center - offset..center + offset],
-        rect,
+        global_data.width,
+        global_data.height,
+        channel_data.position,
         c,
         g,
     );
@@ -197,25 +190,36 @@ fn perform_fft(samples: &[f64]) -> Vec<Complex32> {
     spectrum
 }
 
-fn render_samples<G>(samples: &[f64], rect: (f64, f64, f64, f64), c: Context, g: &mut G)
-where
+fn render_samples<G>(
+    samples: &[f64],
+    width: f64,
+    height: f64,
+    position: (f64, f64, f64, f64),
+    c: Context,
+    g: &mut G,
+) where
     G: Graphics,
 {
-    let points = space_samples(samples, rect.2, rect.3)
+    let points = space_samples(samples)
         .into_iter()
-        .map(|(x, y)| (x + rect.0, y + rect.1))
+        .map(|(x, y)| {
+            (
+                lerp(position.0, position.1, x.clamp(0.0, 1.0)) * width,
+                lerp(position.2, position.3, y.clamp(0.0, 1.0)) * height,
+            )
+        })
         .collect();
     let line = Line::new([1.0, 1.0, 1.0, 1.0], 1.0);
 
     draw_lines(points, line, c, g)
 }
 
-fn space_samples(samples: &[f64], width: f64, height: f64) -> Vec<(f64, f64)> {
-    let spacing = width / (samples.len() - 1) as f64;
+fn space_samples(samples: &[f64]) -> Vec<(f64, f64)> {
+    let spacing = 1.0 / (samples.len() - 1) as f64;
     samples
         .into_iter()
         .enumerate()
-        .map(|(i, y)| (i as f64 * spacing, (y * 0.5 + 0.5) * height))
+        .map(|(i, y)| (i as f64 * spacing, (y * 0.5 + 0.5)))
         .collect()
 }
 

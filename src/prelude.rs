@@ -1,12 +1,12 @@
 pub use crate::fm::*;
 pub use crate::graph::*;
-pub use crate::midi::*;
 pub use crate::node::*;
 pub use crate::oscilloscope::*;
 pub use crate::output::*;
 pub use crate::score::*;
 pub use crate::wave::*;
 pub use crate::wavetable::*;
+pub use crate::daw::*;
 pub use typenum::{U0, U1, U10, U2, U3, U4, U5, U6, U7, U8, U9};
 
 pub fn sine() -> Box<SineOscillator> {
