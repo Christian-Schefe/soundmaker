@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Instant;
 
-use fundsp::prelude::{lerp, lerp11};
+use fundsp::prelude::lerp;
 use piston_window::*;
 use rustfft::num_complex::Complex32;
 use rustfft::num_traits::Zero;
@@ -37,10 +37,17 @@ struct ChannelData {
     buffer_size: usize,
     zoom: f64,
     prev: (usize, Vec<Complex32>),
+    name: String,
 }
 
 impl ChannelData {
-    fn new(data: Vec<f64>, position: (f64, f64, f64, f64), buffer_size: usize, zoom: f64) -> Self {
+    fn new(
+        data: Vec<f64>,
+        name: String,
+        position: (f64, f64, f64, f64),
+        buffer_size: usize,
+        zoom: f64,
+    ) -> Self {
         Self {
             data: vec![0.0; buffer_size * 2]
                 .into_iter()
@@ -51,18 +58,19 @@ impl ChannelData {
             buffer_size,
             zoom,
             prev: (0, vec![Complex32::zero(); buffer_size]),
+            name,
         }
     }
 }
 
 pub fn render(mut daw: DAW, sample_rate: f64) {
-    let mut global_data = GlobalData::new(800.0, 600.0, sample_rate);
+    let mut global_data = GlobalData::new(1600.0, 1200.0, sample_rate);
 
     let (duration, mix_wave, channel_waves) = daw.render_waves(sample_rate);
 
     println!("duration: {}", duration.as_secs_f32());
 
-    let y_fac = 1.0 / daw.channel_count as f64;
+    let y_fac = 1.0 / (daw.channel_count + 1) as f64;
 
     let mut channel_data: Vec<ChannelData> = channel_waves
         .into_iter()
@@ -70,6 +78,7 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
         .map(|(i, x)| {
             ChannelData::new(
                 x,
+                daw[i].name.clone(),
                 (0.0, 1.0, i as f64 * y_fac, (i + 1) as f64 * y_fac),
                 4096,
                 0.5,
@@ -77,11 +86,31 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
         })
         .collect();
 
+    channel_data.push(ChannelData::new(
+        mix_wave.clone(),
+        daw.master.name,
+        (0.0, 1.0, 1.0 - y_fac, 1.0),
+        4096,
+        0.5,
+    ));
+
     let mut window: PistonWindow =
-        WindowSettings::new("Oscilloscope View", [global_data.width, global_data.height])
+        WindowSettings::new("Oscilloscope", [global_data.width, global_data.height])
             .exit_on_esc(true)
             .build()
             .unwrap();
+
+    let mut glyphs = Glyphs::new(
+        "assets/Sarala-Regular.ttf",
+        TextureContext {
+            factory: window.factory.clone(),
+            encoder: window.factory.create_command_buffer().into(),
+        },
+        TextureSettings::new()
+            .min(Filter::Nearest)
+            .mag(Filter::Nearest),
+    )
+    .unwrap();
 
     thread::spawn(move || {
         play_data(mix_wave, sample_rate).unwrap();
@@ -90,13 +119,32 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
     global_data.start_time = Instant::now();
 
     while let Some(event) = window.next() {
-        window.draw_2d(&event, |c, g, _| {
+        window.draw_2d(&event, |c, g, device| {
             clear([0.0, 0.0, 0.0, 1.0], g);
 
             let current_time = global_data.current_time().min(duration.as_secs_f64());
-            channel_data
-                .iter_mut()
-                .for_each(|x| render_track(&global_data, x, current_time, c, g))
+            channel_data.iter_mut().for_each(|x| {
+                render_track(&global_data, x, current_time, c, g);
+                render_text(
+                    &x.name,
+                    global_data.width,
+                    global_data.height,
+                    x.position,
+                    c,
+                    g,
+                    &mut glyphs,
+                );
+            });
+
+            draw_grid(
+                global_data.width,
+                global_data.height,
+                (1, channel_data.len()),
+                c,
+                g,
+            );
+
+            glyphs.factory.encoder.flush(device);
         });
     }
 }
@@ -214,6 +262,28 @@ fn render_samples<G>(
     draw_lines(points, line, c, g)
 }
 
+fn render_text<G, T>(
+    text: &str,
+    width: f64,
+    height: f64,
+    position: (f64, f64, f64, f64),
+    c: Context,
+    g: &mut G,
+    glyphs: &mut T,
+) where
+    G: Graphics<Texture = T::Texture>,
+    T: CharacterCache,
+{
+    let font_size = 24;
+
+    let x = position.0 * width + 10.0;
+    let y = position.2 * height + 30.0;
+
+    text::Text::new_color([1.0, 1.0, 1.0, 1.0], font_size)
+        .draw(text, glyphs, &c.draw_state, c.transform.trans(x, y), g)
+        .unwrap();
+}
+
 fn space_samples(samples: &[f64]) -> Vec<(f64, f64)> {
     let spacing = 1.0 / (samples.len() - 1) as f64;
     samples
@@ -234,5 +304,23 @@ where
 
     for segment in segments {
         line.draw(segment, &c.draw_state, c.transform, g);
+    }
+}
+
+fn draw_grid<G>(width: f64, height: f64, divisions: (usize, usize), c: Context, g: &mut G)
+where
+    G: Graphics,
+{
+    let line = Line::new([0.0, 0.0, 0.6, 1.0], 1.0);
+    let x_w = width / (divisions.0) as f64;
+    let y_w = height / (divisions.1) as f64;
+
+    for x in 1..divisions.0 {
+        let x_pos = x as f64 * x_w;
+        line.draw([x_pos, 0.0, x_pos, height], &c.draw_state, c.transform, g)
+    }
+    for y in 1..divisions.1 {
+        let y_pos = y as f64 * y_w;
+        line.draw([0.0, y_pos, width, y_pos], &c.draw_state, c.transform, g)
     }
 }

@@ -14,16 +14,11 @@ mod midi;
 mod processor;
 mod synthesizer;
 
-fn pan_weights<T: Real>(value: T) -> (T, T) {
-    let angle = (clamp11(value) + T::one()) * T::from_f64(PI * 0.25);
-    (cos(angle), sin(angle))
-}
-
 #[derive(Clone)]
 pub struct DAW {
     channels: Vec<SynthChannel>,
     pub channel_count: usize,
-    master: Channel,
+    pub master: Channel,
     time: f64,
     delta_time: f64,
 }
@@ -33,17 +28,26 @@ impl DAW {
         Self {
             channels: Vec::new(),
             channel_count: 0,
-            master: Channel::new(0, 1.0, 0.0, 0.0),
+            master: Channel::new("Master".to_string(), 0, 1.0, 0.0),
             time: 0.0,
             delta_time: 1.0 / DEFAULT_SR,
         }
     }
     pub fn set_midi(&mut self, midi: Smf) {
-        // assert_eq!(midi.tracks.len(), self.channel_count);
+        println!(
+            "MIDI has {} tracks, DAW has {} channels.",
+            midi.tracks.len(),
+            self.channel_count
+        );
+
+        let fixed_midi = MidiMsg::distributed_tempos(midi);
 
         for (i, channel) in self.channels.iter_mut().enumerate() {
-            let track = MidiMsg::from_track(&midi.tracks[i]);
-            
+            let track = fixed_midi
+                .get(i)
+                .map(|x| x.iter().copied().collect())
+                .unwrap_or(Vec::new());
+
             for event in track.iter() {
                 println!("{:?}", event);
             }
@@ -61,7 +65,7 @@ impl DAW {
 
         println!("rendering");
 
-        while self.time <= 50.0 {
+        while self.time - last_meaningful <= 5.0 && self.time < 600.0 {
             let outputs: Vec<f64> = self.tick_channels().into_iter().map(|x| x[0]).collect();
             for i in 0..self.channel_count {
                 channel_data[i].push(outputs[i])
@@ -70,6 +74,9 @@ impl DAW {
             master_data.push(mix);
             if mix > 0.1 {
                 last_meaningful = self.time;
+            }
+            if (self.time * 0.1) as usize > ((self.time - self.delta_time) * 0.1) as usize {
+                println!("Time: {}s", self.time as usize)
             }
         }
         println!("rendering finished with duration: {}", self.time);
@@ -80,26 +87,26 @@ impl DAW {
             channel_data,
         )
     }
-    pub fn add_channel_boxed(&mut self, synth: Box<dyn Synthesizer>, volume: f64) -> usize {
+    pub fn add_channel_boxed(
+        &mut self,
+        name: String,
+        synth: Box<dyn Synthesizer>,
+        volume: f64,
+        pan: f64,
+    ) -> usize {
         let index = self.channel_count;
         self.channel_count += 1;
         self.channels.push(SynthChannel::new(
-            Channel::new(index, volume, 0.0, 0.0),
+            Channel::new(name, index, volume, pan),
             synth,
         ));
         index
     }
-    pub fn add_channel<T>(&mut self, synth: T, volume: f64) -> usize
+    pub fn add_channel<T>(&mut self, name: String, synth: T, volume: f64, pan: f64) -> usize
     where
         T: Synthesizer + 'static,
     {
-        self.add_channel_boxed(Box::new(synth), volume)
-    }
-    pub fn set_master_volume(&mut self, volume: f64) {
-        self.master.volume_pan.set_volume(volume);
-    }
-    pub fn set_master_pan(&mut self, left_pan: f64, right_pan: f64) {
-        self.master.volume_pan.set_pan(left_pan, right_pan);
+        self.add_channel_boxed(name, Box::new(synth), volume, pan)
     }
     pub fn tick_channels(&mut self) -> Vec<Frame<f64, U2>> {
         let output = self
@@ -155,28 +162,38 @@ impl AudioNode for DAW {
 #[derive(Clone)]
 pub struct Channel {
     pub index: usize,
-    volume_pan: VolumePanStereo,
+    pub volume: f64,
+    pub pan: f64,
     pub processors: Vec<Box<dyn Processor>>,
+    pub name: String,
 }
 
 impl Channel {
-    fn new(index: usize, volume: f64, pan_left: f64, pan_right: f64) -> Self {
+    fn new(name: String, index: usize, volume: f64, pan: f64) -> Self {
         Self {
             index,
-            volume_pan: VolumePanStereo::new(volume, pan_left, pan_right),
+            volume,
+            pan,
             processors: Vec::new(),
+            name,
         }
     }
-    pub fn set_volume(&mut self, volume: f64) {
-        self.volume_pan.set_volume(volume);
-    }
-    pub fn set_pan(&mut self, left_pan: f64, right_pan: f64) {
-        self.volume_pan.set_pan(left_pan, right_pan);
-    }
     fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
+        let adjusted = self.volume_pan(input);
         self.processors
             .iter_mut()
-            .fold(self.volume_pan.tick(input), |acc, x| x.tick(&acc))
+            .fold(adjusted, |acc, x| x.tick(&acc))
+    }
+    fn volume_pan(&self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
+        let left_vol = self.volume * (1.0 - self.pan).clamp(0.0, 1.0);
+        let right_vol = self.volume * (1.0 + self.pan).clamp(0.0, 1.0);
+        [left_vol * input[0], right_vol * input[1]].into()
+    }
+    pub fn add<T>(&mut self, processor: T)
+    where
+        T: Processor + 'static,
+    {
+        self.processors.push(Box::new(processor))
     }
 }
 
@@ -207,36 +224,5 @@ impl SynthChannel {
     fn tick(&mut self, time: f64) -> Frame<f64, U2> {
         let input = self.synth.tick(time);
         self.channel.tick(&input)
-    }
-}
-
-#[derive(Clone)]
-struct VolumePanStereo {
-    volume: f64,
-    left_pan: (f64, f64),
-    right_pan: (f64, f64),
-}
-
-impl VolumePanStereo {
-    fn new(volume: f64, left_pan: f64, right_pan: f64) -> Self {
-        Self {
-            volume,
-            left_pan: pan_weights(left_pan),
-            right_pan: pan_weights(right_pan),
-        }
-    }
-    fn set_volume(&mut self, volume: f64) {
-        self.volume = volume;
-    }
-    fn set_pan(&mut self, left_pan: f64, right_pan: f64) {
-        self.left_pan = pan_weights(left_pan);
-        self.right_pan = pan_weights(right_pan);
-    }
-    fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
-        [
-            self.volume * (input[0] * self.left_pan.0 + input[1] * self.right_pan.0),
-            self.volume * (input[0] * self.left_pan.1 + input[1] * self.right_pan.1),
-        ]
-        .into()
     }
 }

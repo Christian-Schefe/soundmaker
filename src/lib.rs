@@ -1,3 +1,4 @@
+pub mod prelude;
 pub mod oscilloscope;
 pub mod playback;
 pub mod score;

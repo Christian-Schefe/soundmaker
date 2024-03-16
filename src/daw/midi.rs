@@ -1,5 +1,6 @@
 use midly::MetaMessage;
 use midly::MidiMessage;
+use midly::Smf;
 use midly::Track;
 use midly::TrackEventKind;
 
@@ -26,7 +27,7 @@ impl MidiWrapper {
         dropped_notes: &mut Vec<u8>,
         new_notes: &mut Vec<(u8, f64)>,
     ) {
-        println!("consume: {msg:?}");
+        // println!("consume: {msg:?}");
         match msg.kind {
             MsgType::NoteOn(pitch, vel) => {
                 new_notes.push((pitch, vel as f64 / 127.0));
@@ -101,6 +102,27 @@ impl MidiMsg {
             }
         }
         vec
+    }
+    pub fn distributed_tempos(midi: Smf) -> Vec<Vec<Self>> {
+        let mut messages: Vec<Vec<Self>> = midi.tracks.iter().map(Self::from_track).collect();
+        let mut tempo_messages: Vec<Self> = messages
+            .iter()
+            .flat_map(|x| {
+                x.iter().filter(|&x| match x.kind {
+                    MsgType::Tempo(_) => true,
+                    _ => false,
+                })
+            })
+            .copied()
+            .collect();
+        tempo_messages.sort_by(|a, b| a.abs_ticks.cmp(&b.abs_ticks));
+
+        for channel in messages.iter_mut() {
+            channel.extend(tempo_messages.iter());
+            channel.sort_by(|a, b| a.abs_ticks.cmp(&b.abs_ticks));
+        }
+
+        messages
     }
 }
 

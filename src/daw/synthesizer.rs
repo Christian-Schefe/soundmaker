@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use dyn_clone::{clone_trait_object, DynClone};
 use fundsp::prelude::*;
 
@@ -11,13 +9,12 @@ pub trait Synthesizer: DynClone + Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct TestSynth {}
-impl Synthesizer for TestSynth {
-    fn set_midi(&mut self, midi: Vec<MidiMsg>) {}
+pub struct SinkSynth;
+impl Synthesizer for SinkSynth {
+    fn set_midi(&mut self, _midi: Vec<MidiMsg>) {}
 
-    fn tick(&mut self, time: f64) -> Frame<f64, U2> {
-        let val = (time * 440.0).sin();
-        [val, val].into()
+    fn tick(&mut self, _time: f64) -> Frame<f64, U2> {
+        [0.0, 0.0].into()
     }
 }
 
@@ -28,7 +25,7 @@ pub struct SimpleSynth {
     midi_wrapper: MidiWrapper,
     voices: Vec<Box<dyn AudioUnit64>>,
     last_notes: Vec<(u8, f64, bool)>,
-    free_voices: VecDeque<usize>,
+    voice_index: usize,
 }
 
 impl SimpleSynth {
@@ -37,23 +34,29 @@ impl SimpleSynth {
             midi_wrapper: MidiWrapper::new(Vec::new()),
             voices: vec![node; voices],
             last_notes: vec![(0, 0.0, false); voices],
-            free_voices: (0..voices).collect(),
+            voice_index: 0,
         }
     }
     fn update_notes(&mut self, dropped: Vec<u8>, new: Vec<(u8, f64)>) {
+        // let change = dropped.len() + new.len() > 0;
+
         for note in dropped {
-            let i = self.last_notes.iter().position(|x| x.0 == note);
-            if let Some(pos) = i {
-                self.last_notes[pos].2 = false;
-                self.free_voices.push_back(pos);
+            for i in 0..self.last_notes.len() {
+                let last_note = &mut self.last_notes[i];
+                if last_note.0 == note && last_note.2 {
+                    last_note.2 = false;
+                }
             }
         }
         for note in new {
-            let i = self.free_voices.pop_front();
-            if let Some(pos) = i {
-                self.last_notes[pos] = (note.0, note.1, true)
-            }
+            self.voices[self.voice_index].reset();
+            self.last_notes[self.voice_index] = (note.0, note.1, true);
+            self.voice_index = (self.voice_index + 1) % self.voices.len();
         }
+
+        // if change {
+        //     println!("{:?}", self.last_notes);
+        // }
     }
 }
 
