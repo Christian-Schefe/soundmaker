@@ -29,7 +29,7 @@ impl DAW {
         Self {
             channels: Vec::new(),
             channel_count: 0,
-            master: Channel::new("Master".to_string(), 0, 1.0, 0.0),
+            master: Channel::new("Master".to_string(), 0, 1.0, 0.0, Vec::new()),
             time: 0.0,
             delta_time: 1.0 / DEFAULT_SR,
         }
@@ -96,22 +96,30 @@ impl DAW {
         &mut self,
         name: String,
         synth: Box<dyn Synthesizer>,
+        processors: Vec<Box<dyn Processor>>,
         volume: f64,
         pan: f64,
     ) -> usize {
         let index = self.channel_count;
         self.channel_count += 1;
         self.channels.push(SynthChannel::new(
-            Channel::new(name, index, volume, pan),
+            Channel::new(name, index, volume, pan, processors),
             synth,
         ));
         index
     }
-    pub fn add_channel<T>(&mut self, name: String, synth: T, volume: f64, pan: f64) -> usize
+    pub fn add_channel<T>(
+        &mut self,
+        name: String,
+        synth: T,
+        processors: Vec<Box<dyn Processor>>,
+        volume: f64,
+        pan: f64,
+    ) -> usize
     where
         T: Synthesizer + 'static,
     {
-        self.add_channel_boxed(name, Box::new(synth), volume, pan)
+        self.add_channel_boxed(name, Box::new(synth), processors, volume, pan)
     }
     pub fn tick_channels(&mut self) -> Vec<Frame<f64, U2>> {
         let output = self
@@ -174,12 +182,18 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn new(name: String, index: usize, volume: f64, pan: f64) -> Self {
+    fn new(
+        name: String,
+        index: usize,
+        volume: f64,
+        pan: f64,
+        processors: Vec<Box<dyn Processor>>,
+    ) -> Self {
         Self {
             index,
             volume,
             pan,
-            processors: Vec::new(),
+            processors,
             name,
         }
     }

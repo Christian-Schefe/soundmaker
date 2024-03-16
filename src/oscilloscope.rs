@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use fundsp::prelude::lerp;
 use piston_window::*;
+use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
 use rustfft::num_complex::Complex32;
 use rustfft::num_traits::Zero;
 use rustfft::FftPlanner;
@@ -33,6 +34,7 @@ impl GlobalData {
 
 struct ChannelData {
     data: Vec<f64>,
+    frame_indices: Vec<usize>,
     position: (f64, f64, f64, f64),
     buffer_size: usize,
     zoom: f64,
@@ -54,6 +56,7 @@ impl ChannelData {
                 .chain(data)
                 .chain(vec![0.0; buffer_size * 2])
                 .collect(),
+            frame_indices: Vec::new(),
             position,
             buffer_size,
             zoom,
@@ -61,16 +64,113 @@ impl ChannelData {
             name,
         }
     }
+    fn precompute_indices(&mut self, global_data: &GlobalData, fps: f64) {
+        let mut indices = Vec::new();
+        let secs_per_frame = 1.0 / fps;
+        let mut i = 0;
+        println!("Precomputing...");
+        let start_time = Instant::now();
+        loop {
+            let passed_time = i as f64 * secs_per_frame;
+            let index = 2 * self.buffer_size + (global_data.sample_rate * passed_time) as usize;
+            if index >= self.data.len() {
+                break;
+            }
+
+            let best_i = self.find_by_zero(index);
+            indices.push(best_i);
+            i += 1;
+        }
+        println!(
+            "Finished precomputing {} in {:.2}s",
+            self.name,
+            start_time.elapsed().as_secs_f32()
+        );
+        self.frame_indices = indices;
+    }
+    fn find_by_search(&mut self, index: usize) -> usize {
+        let mut best_spectrum = perform_fft(&self.data[index - self.buffer_size..index]);
+        let mut best_score = cross_correlation(&self.prev.1, &best_spectrum);
+        let mut best_index = index;
+
+        let mut update_best = |i, best_index: usize| -> usize {
+            let spectrum = perform_fft(&self.data[i - self.buffer_size..i]);
+            let score = cross_correlation(&self.prev.1, &spectrum);
+
+            if score > best_score {
+                best_score = score;
+                best_spectrum = spectrum;
+                i
+            } else {
+                best_index
+            }
+        };
+
+        let steps = 40;
+        let step_size = 800 / steps;
+
+        for offset in 0..steps {
+            let i = index - (offset * step_size);
+            best_index = update_best(i, best_index);
+        }
+
+        let cur = best_index;
+
+        let steps = step_size * 2;
+        for offset in 0..steps {
+            let i = cur + step_size - offset;
+            if i > index {
+                break;
+            }
+            best_index = update_best(i, best_index);
+        }
+
+        self.prev = (best_index, best_spectrum);
+        best_index
+    }
+    fn find_by_zero(&mut self, index: usize) -> usize {
+        let zeros = (0..800).filter_map(|x| {
+            let i = index - x;
+            let val = self.data[i];
+            if val >= 0.0 && self.data[i - 1] < 0.0 {
+                Some(i)
+            } else {
+                None
+            }
+        });
+
+        let best = zeros
+            .map(|x| {
+                let spectrum = perform_fft(&self.data[x - self.buffer_size..x]);
+                let score = cross_correlation(&self.prev.1, &spectrum);
+                (score, x, spectrum)
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+
+        if let Some((_, best_index, best_spectrum)) = best {
+            self.prev = (best_index, best_spectrum);
+        } else {
+            self.prev = (
+                index,
+                perform_fft(&self.data[index - self.buffer_size..index]),
+            );
+        }
+
+        self.prev.0 + self.buffer_size / 2
+    }
 }
 
 pub fn render(mut daw: DAW, sample_rate: f64) {
-    let mut global_data = GlobalData::new(1600.0, 1200.0, sample_rate);
+    let mut global_data = GlobalData::new(1000.0, 1000.0, sample_rate);
 
     let (duration, mix_wave, channel_waves) = daw.render_waves(sample_rate);
 
     println!("duration: {}", duration.as_secs_f32());
 
     let y_fac = 1.0 / (daw.channel_count + 1) as f64;
+    let buffer_size = 4096;
+    let zoom = 1.0;
+    let resolution_fps = 60.0;
 
     let mut channel_data: Vec<ChannelData> = channel_waves
         .into_iter()
@@ -80,8 +180,8 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
                 x,
                 daw[i].name.clone(),
                 (0.0, 1.0, i as f64 * y_fac, (i + 1) as f64 * y_fac),
-                4096,
-                0.5,
+                buffer_size,
+                zoom,
             )
         })
         .collect();
@@ -90,9 +190,13 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
         mix_wave.clone(),
         daw.master.name,
         (0.0, 1.0, 1.0 - y_fac, 1.0),
-        4096,
-        0.5,
+        buffer_size,
+        zoom,
     ));
+
+    channel_data
+        .par_iter_mut()
+        .for_each(|x| x.precompute_indices(&global_data, resolution_fps));
 
     let mut window: PistonWindow =
         WindowSettings::new("Oscilloscope", [global_data.width, global_data.height])
@@ -118,22 +222,30 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
 
     global_data.start_time = Instant::now();
 
+    let mut delta_time_buffer = [0.0, 0.0, 0.0];
+    let mut delta_index = 0;
+    let mut prev_time = 0.0;
+
+    // let mut frame = 0;
+
     while let Some(event) = window.next() {
         window.draw_2d(&event, |c, g, device| {
             clear([0.0, 0.0, 0.0, 1.0], g);
 
-            let current_time = global_data.current_time().min(duration.as_secs_f64());
+            let current_time = global_data.current_time();
+            let delta_time = current_time - prev_time;
+            delta_time_buffer[delta_index] = delta_time;
+            delta_index = (delta_index + 1) % delta_time_buffer.len();
+            prev_time = current_time;
+
+            let fps = delta_time_buffer.len() as f64 / delta_time_buffer.iter().sum::<f64>();
+            println!("fps: {fps:.2}");
+
+            let actual_frame = (current_time * resolution_fps) as usize;
+
             channel_data.iter_mut().for_each(|x| {
-                render_track(&global_data, x, current_time, c, g);
-                render_text(
-                    &x.name,
-                    global_data.width,
-                    global_data.height,
-                    x.position,
-                    c,
-                    g,
-                    &mut glyphs,
-                );
+                render_track(&global_data, x, actual_frame, c, g);
+                render_name(&global_data, x, c, g, &mut glyphs);
             });
 
             draw_grid(
@@ -145,6 +257,7 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
             );
 
             glyphs.factory.encoder.flush(device);
+            // frame += 1;
         });
     }
 }
@@ -152,25 +265,16 @@ pub fn render(mut daw: DAW, sample_rate: f64) {
 fn render_track<G>(
     global_data: &GlobalData,
     channel_data: &mut ChannelData,
-    current_time: f64,
+    frame: usize,
     c: Context,
     g: &mut G,
 ) where
     G: Graphics,
 {
-    let buffer_size = channel_data.buffer_size;
-    let index = (channel_data.buffer_size * 2 + (current_time * global_data.sample_rate) as usize)
-        .min(channel_data.data.len());
+    let index = channel_data.frame_indices[frame.min(channel_data.frame_indices.len() - 1)];
 
-    find_best_window(
-        &channel_data.data,
-        &mut channel_data.prev,
-        index,
-        buffer_size,
-    );
-
-    let center = channel_data.prev.0 - buffer_size / 2;
-    let offset = (buffer_size as f64 * channel_data.zoom * 0.5) as usize;
+    let center = index - channel_data.buffer_size / 2;
+    let offset = (channel_data.buffer_size as f64 * channel_data.zoom * 0.5) as usize;
 
     render_samples(
         &channel_data.data[center - offset..center + offset],
@@ -182,40 +286,12 @@ fn render_track<G>(
     );
 }
 
-fn find_best_window(data: &[f64], prev: &mut (usize, Vec<Complex32>), cur: usize, length: usize) {
-    let mut best = None;
-
-    let update_best = |index, best: &mut Option<(usize, f32, Vec<Complex32>)>| {
-        let spectrum = perform_fft(&data[index - length..index]);
-        let score = cross_correlation(&prev.1, &spectrum);
-
-        if best.is_none() || best.as_ref().is_some_and(|x| x.1 < score) {
-            *best = Some((index, score, spectrum))
-        }
-    };
-
-    let step_size = 30;
-    let steps = length / (step_size * 2);
-    for offset in 0..steps {
-        let index = cur - (offset * step_size);
-        update_best(index, &mut best);
-    }
-
-    let cur = best.as_ref().unwrap().0;
-
-    for offset in 0..step_size * 2 {
-        let index = cur + step_size - offset;
-        update_best(index, &mut best);
-    }
-
-    *prev = best.map(|x| (x.0, x.2)).unwrap();
-}
-
 fn cross_correlation(prev_spectrum: &[Complex32], spectrum: &[Complex32]) -> f32 {
     let mut cross_correlation = 0.0;
     let window_size = prev_spectrum.len().min(spectrum.len());
     for i in 0..window_size {
-        cross_correlation += prev_spectrum[i].re * spectrum[i].re;
+        cross_correlation +=
+            prev_spectrum[i].re * spectrum[i].re + prev_spectrum[i].im * spectrum[i].im;
     }
     cross_correlation /= window_size as f32;
     cross_correlation
@@ -248,7 +324,15 @@ fn render_samples<G>(
 ) where
     G: Graphics,
 {
-    let points = space_samples(samples)
+    let new_samples: Vec<f64> = (0..=width as usize)
+        .map(|x| {
+            let alpha = x as f64 / width;
+            let i = (alpha * (samples.len() - 1) as f64) as usize;
+            samples[i]
+        })
+        .collect();
+
+    let points = space_samples(&new_samples)
         .into_iter()
         .map(|(x, y)| {
             (
@@ -262,11 +346,9 @@ fn render_samples<G>(
     draw_lines(points, line, c, g)
 }
 
-fn render_text<G, T>(
-    text: &str,
-    width: f64,
-    height: f64,
-    position: (f64, f64, f64, f64),
+fn render_name<G, T>(
+    global_data: &GlobalData,
+    channel_data: &mut ChannelData,
     c: Context,
     g: &mut G,
     glyphs: &mut T,
@@ -276,11 +358,17 @@ fn render_text<G, T>(
 {
     let font_size = 24;
 
-    let x = position.0 * width + 10.0;
-    let y = position.2 * height + 30.0;
+    let x = channel_data.position.0 * global_data.width + 10.0;
+    let y = channel_data.position.2 * global_data.height + 30.0;
 
     text::Text::new_color([1.0, 1.0, 1.0, 1.0], font_size)
-        .draw(text, glyphs, &c.draw_state, c.transform.trans(x, y), g)
+        .draw(
+            &channel_data.name,
+            glyphs,
+            &c.draw_state,
+            c.transform.trans(x, y),
+            g,
+        )
         .unwrap();
 }
 

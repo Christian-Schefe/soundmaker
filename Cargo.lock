@@ -1848,6 +1848,7 @@ dependencies = [
  "midly",
  "petgraph",
  "piston_window",
+ "rayon",
  "rustfft",
  "typenum",
 ]
