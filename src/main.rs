@@ -10,7 +10,7 @@ use soundmaker::{
 };
 
 fn main() {
-    let bytes = include_bytes!("../output/castle.mid");
+    let bytes = include_bytes!("../assets/castle.mid");
     let smf = Smf::parse(bytes).unwrap();
     // let smf = test_midi();
     // let smf = smf.to_midi();

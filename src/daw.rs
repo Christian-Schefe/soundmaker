@@ -1,6 +1,7 @@
 use std::ops::Index;
 use std::ops::IndexMut;
 use std::time::Duration;
+use std::time::Instant;
 
 use fundsp::prelude::*;
 use midly::Smf;
@@ -63,7 +64,8 @@ impl DAW {
 
         let mut last_meaningful = 0.0;
 
-        println!("rendering");
+        println!("Rendering...");
+        let render_start = Instant::now();
 
         while self.time - last_meaningful <= 5.0 && self.time < 600.0 {
             let outputs: Vec<f64> = self.tick_channels().into_iter().map(|x| x[0]).collect();
@@ -79,7 +81,10 @@ impl DAW {
                 println!("Time: {}s", self.time as usize)
             }
         }
-        println!("rendering finished with duration: {}", self.time);
+        println!(
+            "Rendering finished in {:.2}s",
+            render_start.elapsed().as_secs_f32()
+        );
 
         (
             Duration::from_secs_f64(self.time),

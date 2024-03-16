@@ -9,7 +9,9 @@ use fundsp::wave::{Wave64, Wave64Player};
 pub fn play_data(data: Vec<f64>, sample_rate: f64) -> Result<(), anyhow::Error> {
     let wave = Arc::new(Wave64::from_samples(sample_rate, &data));
     let player = Wave64Player::new(&wave, 0, 0, wave.length(), None);
-    play_sound(player, Duration::from_secs_f64(wave.duration()))
+    wave.save_wav32("output/master.wav")?;
+    play_sound(player, Duration::from_secs_f64(wave.duration()))?;
+    Ok(())
 }
 
 pub fn play_sound<T>(mut sound: T, duration: Duration) -> Result<(), anyhow::Error>
