@@ -1,6 +1,6 @@
 use fundsp::prelude::*;
 use midly::Smf;
-use soundmaker::{daw::*, oscilloscope::render, prelude::make_adsr};
+use soundmaker::{daw::*, oscilloscope::draw_oscilloscope, prelude::make_adsr};
 
 fn main() {
     let bytes = include_bytes!("../assets/spring_rain.mid");
@@ -23,7 +23,7 @@ fn main() {
     daw.add_channel_boxed("Piano RH".to_string(), piano_l.0, piano_l.1, 2.5, 0.0);
 
     daw.set_midi(smf);
-    render(daw, sample_rate);
+    draw_oscilloscope(daw, sample_rate);
 }
 
 fn piano() -> (Box<dyn Synthesizer>, Vec<Box<dyn Processor>>) {

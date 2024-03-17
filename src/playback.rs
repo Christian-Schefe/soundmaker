@@ -6,11 +6,20 @@ use cpal::{FromSample, SizedSample, Stream};
 use fundsp::prelude::AudioNode;
 use fundsp::wave::{Wave64, Wave64Player};
 
-pub fn play_data(data: Vec<f64>, sample_rate: f64) -> Result<(), anyhow::Error> {
-    let wave = Arc::new(Wave64::from_samples(sample_rate, &data));
-    let player = Wave64Player::new(&wave, 0, 0, wave.length(), None);
-    wave.save_wav32("output/master.wav")?;
-    play_sound(player, Duration::from_secs_f64(wave.duration()))?;
+pub fn play_data(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration) -> Result<(), anyhow::Error> {
+    let mut wave = Wave64::new(0, sample_rate);
+    let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
+
+    wave.push_channel(&left_channel);
+    wave.push_channel(&right_channel);
+
+    let len = wave.len();
+
+    let arc = Arc::new(wave);
+
+    let player = Wave64Player::new(&arc, 0, 0, len, None);
+    arc.save_wav32("output/master.wav")?;
+    play_sound(player, duration)?;
     Ok(())
 }
 

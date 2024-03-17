@@ -1,18 +1,18 @@
 use std::ops::Index;
 use std::ops::IndexMut;
 use std::time::Duration;
-use std::time::Instant;
 
 use fundsp::prelude::*;
 use midly::Smf;
 
-use crate::daw::midi::MidiMsg;
-
+pub use self::midi::*;
 pub use self::processor::*;
+pub use self::render::*;
 pub use self::synthesizer::*;
 
 mod midi;
 mod processor;
+mod render;
 mod synthesizer;
 
 #[derive(Clone)]
@@ -22,6 +22,7 @@ pub struct DAW {
     pub master: Channel,
     time: f64,
     delta_time: f64,
+    pub duration: Duration,
 }
 
 impl DAW {
@@ -32,6 +33,7 @@ impl DAW {
             master: Channel::new("Master".to_string(), 0, 1.0, 0.0, Vec::new()),
             time: 0.0,
             delta_time: 1.0 / DEFAULT_SR,
+            duration: Duration::ZERO,
         }
     }
     pub fn set_midi(&mut self, midi: Smf) {
@@ -41,7 +43,12 @@ impl DAW {
             self.channel_count
         );
 
-        let fixed_midi = MidiMsg::distributed_tempos(midi);
+        let (fixed_midi, duration) = MidiMsg::convert_smf(midi);
+        self.duration = duration;
+        println!(
+            "Determined duration of {:.2} seconds.",
+            duration.as_secs_f64()
+        );
 
         for (i, channel) in self.channels.iter_mut().enumerate() {
             let track = fixed_midi
@@ -49,48 +56,11 @@ impl DAW {
                 .map(|x| x.iter().copied().collect())
                 .unwrap_or(Vec::new());
 
-            for event in track.iter() {
-                println!("{:?}", event);
-            }
+            // for event in track.iter() {
+            //     println!("{:?}", event);
+            // }
             channel.synth.set_midi(track);
         }
-    }
-    pub fn render_waves(&mut self, sample_rate: f64) -> (Duration, Vec<f64>, Vec<Vec<f64>>) {
-        self.reset();
-        self.set_sample_rate(sample_rate);
-
-        let mut channel_data = vec![Vec::new(); self.channel_count];
-        let mut master_data: Vec<f64> = Vec::new();
-
-        let mut last_meaningful = 0.0;
-
-        println!("Rendering...");
-        let render_start = Instant::now();
-
-        while self.time - last_meaningful <= 5.0 && self.time < 600.0 {
-            let outputs: Vec<f64> = self.tick_channels().into_iter().map(|x| x[0]).collect();
-            for i in 0..self.channel_count {
-                channel_data[i].push(outputs[i])
-            }
-            let mix = outputs.into_iter().sum();
-            master_data.push(mix);
-            if mix > 0.1 {
-                last_meaningful = self.time;
-            }
-            if (self.time * 0.1) as usize > ((self.time - self.delta_time) * 0.1) as usize {
-                println!("Time: {}s", self.time as usize)
-            }
-        }
-        println!(
-            "Rendering finished in {:.2}s",
-            render_start.elapsed().as_secs_f32()
-        );
-
-        (
-            Duration::from_secs_f64(self.time),
-            master_data,
-            channel_data,
-        )
     }
     pub fn add_channel_boxed(
         &mut self,

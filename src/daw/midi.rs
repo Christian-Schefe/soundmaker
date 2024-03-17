@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use midly::MetaMessage;
 use midly::MidiMessage;
 use midly::Smf;
@@ -68,10 +70,11 @@ pub struct MidiMsg {
 }
 
 impl MidiMsg {
-    fn new(kind: MsgType, abs_ticks: u32) -> Self {
+    pub fn new(kind: MsgType, abs_ticks: u32) -> Self {
         Self { kind, abs_ticks }
     }
-    pub fn from_track(track: &Track) -> Vec<Self> {
+
+    pub fn convert_track(track: &Track) -> Vec<Self> {
         let mut vec = Vec::new();
         let mut abs_ticks = 0;
         for msg in track {
@@ -103,8 +106,9 @@ impl MidiMsg {
         }
         vec
     }
-    pub fn distributed_tempos(midi: Smf) -> Vec<Vec<Self>> {
-        let mut messages: Vec<Vec<Self>> = midi.tracks.iter().map(Self::from_track).collect();
+
+    pub fn convert_smf(midi: Smf) -> (Vec<Vec<Self>>, Duration) {
+        let mut messages: Vec<Vec<Self>> = midi.tracks.iter().map(Self::convert_track).collect();
         let mut tempo_messages: Vec<Self> = messages
             .iter()
             .flat_map(|x| {
@@ -122,7 +126,44 @@ impl MidiMsg {
             channel.sort_by(|a, b| a.abs_ticks.cmp(&b.abs_ticks));
         }
 
-        messages
+        let last_message = messages
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.abs_ticks.cmp(&b.abs_ticks))
+            .unwrap();
+
+        let duration = Self::calc_duration(&tempo_messages, last_message.abs_ticks);
+
+        (messages, duration)
+    }
+
+    fn calc_duration(tempo_messages: &[Self], total_ticks: u32) -> Duration {
+        let mut tempo_i = 0;
+        let mut current_tempo = 960.0; // 120 BPM
+
+        let mut ticks = 0;
+        let mut time = 0.0;
+
+        while let Some(next_tempo_msg) = tempo_messages.get(tempo_i) {
+            let ticks_to_tempo_change = next_tempo_msg.abs_ticks - ticks;
+            let time_to_change = ticks_to_tempo_change as f64 / current_tempo;
+
+            tempo_i += 1;
+            ticks += ticks_to_tempo_change;
+            time += time_to_change;
+            current_tempo = if let MsgType::Tempo(t) = next_tempo_msg.kind {
+                t
+            } else {
+                panic!("Not a tempo msg!")
+            }
+        }
+
+        let ticks_to_end = total_ticks - ticks;
+        let time_to_end = ticks_to_end as f64 / current_tempo;
+
+        time += time_to_end;
+
+        Duration::from_secs_f64(time)
     }
 }
 
@@ -130,5 +171,5 @@ impl MidiMsg {
 pub enum MsgType {
     NoteOn(u8, u8),
     NoteOff(u8),
-    Tempo(f64),
+    Tempo(f64), //Ticks Per Second
 }
