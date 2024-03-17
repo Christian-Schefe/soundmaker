@@ -28,6 +28,9 @@ impl EQ {
             ),
         }
     }
+    pub fn boxed(lowpass: (f64, f64), highpass: (f64, f64)) -> Box<Self> {
+        Box::new(Self::new(lowpass, highpass))
+    }
 }
 
 impl Processor for EQ {

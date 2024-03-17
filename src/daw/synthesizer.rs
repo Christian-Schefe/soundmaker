@@ -37,6 +37,9 @@ impl SimpleSynth {
             voice_index: 0,
         }
     }
+    pub fn boxed(voices: usize, node: Box<dyn AudioUnit64>) -> Box<Self> {
+        Box::new(Self::new(voices, node))
+    }
     fn update_notes(&mut self, dropped: Vec<u8>, new: Vec<(u8, f64)>) {
         // let change = dropped.len() + new.len() > 0;
 
