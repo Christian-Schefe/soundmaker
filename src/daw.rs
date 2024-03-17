@@ -44,7 +44,7 @@ impl DAW {
         );
 
         let (fixed_midi, duration) = MidiMsg::convert_smf(midi);
-        self.duration = duration;
+        self.duration = duration + Duration::from_secs_f64(5.0);
         println!(
             "Determined duration of {:.2} seconds.",
             duration.as_secs_f64()

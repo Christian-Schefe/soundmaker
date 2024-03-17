@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use rustfft::FftPlanner;
 use geo::algorithm::simplify::*;
 
 use crate::daw::DAW;
-use crate::playback::play_data;
+use crate::playback::play_and_save;
 use crate::prelude::render_daw;
 
 struct ChannelData {
@@ -75,46 +76,46 @@ impl ChannelData {
         );
         self.frame_indices = indices;
     }
-    fn find_by_search(&mut self, index: usize) -> usize {
-        let mut best_spectrum = perform_fft(&self.data[index - self.buffer_size..index]);
-        let mut best_score = cross_correlation(&self.prev.1, &best_spectrum);
-        let mut best_index = index;
+    // fn find_by_search(&mut self, index: usize) -> usize {
+    //     let mut best_spectrum = perform_fft(&self.data[index - self.buffer_size..index]);
+    //     let mut best_score = cross_correlation(&self.prev.1, &best_spectrum);
+    //     let mut best_index = index;
 
-        let mut update_best = |i, best_index: usize| -> usize {
-            let spectrum = perform_fft(&self.data[i - self.buffer_size..i]);
-            let score = cross_correlation(&self.prev.1, &spectrum);
+    //     let mut update_best = |i, best_index: usize| -> usize {
+    //         let spectrum = perform_fft(&self.data[i - self.buffer_size..i]);
+    //         let score = cross_correlation(&self.prev.1, &spectrum);
 
-            if score > best_score {
-                best_score = score;
-                best_spectrum = spectrum;
-                i
-            } else {
-                best_index
-            }
-        };
+    //         if score > best_score {
+    //             best_score = score;
+    //             best_spectrum = spectrum;
+    //             i
+    //         } else {
+    //             best_index
+    //         }
+    //     };
 
-        let steps = 40;
-        let step_size = 800 / steps;
+    //     let steps = 40;
+    //     let step_size = 800 / steps;
 
-        for offset in 0..steps {
-            let i = index - (offset * step_size);
-            best_index = update_best(i, best_index);
-        }
+    //     for offset in 0..steps {
+    //         let i = index - (offset * step_size);
+    //         best_index = update_best(i, best_index);
+    //     }
 
-        let cur = best_index;
+    //     let cur = best_index;
 
-        let steps = step_size * 2;
-        for offset in 0..steps {
-            let i = cur + step_size - offset;
-            if i > index {
-                break;
-            }
-            best_index = update_best(i, best_index);
-        }
+    //     let steps = step_size * 2;
+    //     for offset in 0..steps {
+    //         let i = cur + step_size - offset;
+    //         if i > index {
+    //             break;
+    //         }
+    //         best_index = update_best(i, best_index);
+    //     }
 
-        self.prev = (best_index, best_spectrum);
-        best_index
-    }
+    //     self.prev = (best_index, best_spectrum);
+    //     best_index
+    // }
     fn find_by_zero(&mut self, index: usize) -> usize {
         let zeros = (0..800).filter_map(|x| {
             let i = index - x;
@@ -147,7 +148,7 @@ impl ChannelData {
     }
 }
 
-pub fn draw_oscilloscope(mut daw: DAW, sample_rate: f64) {
+pub fn draw_oscilloscope(mut daw: DAW, sample_rate: f64, file_path: PathBuf) {
     let render = render_daw(&mut daw, sample_rate);
 
     let y_fac = 1.0 / (daw.channel_count + 1) as f64;
@@ -200,7 +201,7 @@ pub fn draw_oscilloscope(mut daw: DAW, sample_rate: f64) {
     .unwrap();
 
     thread::spawn(move || {
-        play_data(render.master, sample_rate, daw.duration).unwrap();
+        play_and_save(render.master, sample_rate, daw.duration, file_path).unwrap();
     });
 
     let mut fps_counter = FPSCounter::new();
@@ -333,12 +334,6 @@ fn render_samples<G>(
             ]
         })
         .collect();
-
-    println!(
-        "original: {}, simplified: {}",
-        samples.len(),
-        vertices.len()
-    );
 
     let p = Line::new([1.0, 1.0, 1.0, 1.0], 1.0);
 

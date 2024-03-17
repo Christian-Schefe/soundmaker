@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,7 +7,7 @@ use cpal::{FromSample, SizedSample, Stream};
 use fundsp::prelude::AudioNode;
 use fundsp::wave::{Wave64, Wave64Player};
 
-pub fn play_data(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration) -> Result<(), anyhow::Error> {
+pub fn play_and_save(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration, file_path: PathBuf) -> Result<(), anyhow::Error> {
     let mut wave = Wave64::new(0, sample_rate);
     let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
 
@@ -18,7 +19,7 @@ pub fn play_data(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration) ->
     let arc = Arc::new(wave);
 
     let player = Wave64Player::new(&arc, 0, 0, len, None);
-    arc.save_wav32("output/master.wav")?;
+    arc.save_wav32(file_path)?;
     play_sound(player, duration)?;
     Ok(())
 }
