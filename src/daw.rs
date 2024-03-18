@@ -56,11 +56,23 @@ impl DAW {
                 .map(|x| x.iter().copied().collect())
                 .unwrap_or(Vec::new());
 
-            // for event in track.iter() {
-            //     println!("{:?}", event);
-            // }
             channel.synth.set_midi(track);
         }
+    }
+    pub fn add_instrument(
+        &mut self,
+        name: String,
+        instrument: &dyn MidiInstrument,
+        volume: f64,
+        pan: f64,
+    ) -> usize {
+        self.add_channel_boxed(
+            name,
+            instrument.build_synth(),
+            instrument.build_processors(),
+            volume,
+            pan,
+        )
     }
     pub fn add_channel_boxed(
         &mut self,

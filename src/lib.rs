@@ -1,11 +1,15 @@
+use std::marker::PhantomData;
+
 use fundsp::prelude::*;
 
-pub mod prelude;
+pub mod daw;
 pub mod oscilloscope;
 pub mod playback;
+pub mod prelude;
 pub mod score;
-pub mod daw;
 
+/// A better ADSR envelope implementation that doesn't use shared variables.
+/// It prevents abrupt changes in the output when the control signal changes.
 #[derive(Clone)]
 pub struct ADSR {
     attack: f64,
@@ -38,6 +42,9 @@ impl ADSR {
             sustain_baseline: sustain,
             last_output: 0.0,
         }
+    }
+    pub fn from_tuple(params: (f64, f64, f64, f64)) -> Self {
+        Self::new(params.0, params.1, params.2, params.3)
     }
 }
 
@@ -102,5 +109,55 @@ impl AudioNode for ADSR {
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.time = 0.0;
         self.delta_time = 1.0 / sample_rate;
+    }
+}
+
+/// A node that selects a subset of the input channels in arbitrary order.
+/// Inputs can be selected multiple times.
+#[derive(Clone)]
+pub struct Selector<I, O>
+where
+    I: Size<usize>,
+    O: Size<usize>,
+{
+    selected: Frame<usize, O>,
+    _marker: PhantomData<I>,
+}
+
+impl<I, O> Selector<I, O>
+where
+    I: Size<usize>,
+    O: Size<usize>,
+{
+    pub fn new(selected: Frame<usize, O>) -> Self {
+        Self {
+            selected,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<I, O> AudioNode for Selector<I, O>
+where
+    I: Size<f64> + Size<usize>,
+    O: Size<f64> + Size<usize>,
+{
+    const ID: u64 = 0x242349;
+
+    type Sample = f64;
+
+    type Inputs = I;
+
+    type Outputs = O;
+
+    type Setting = ();
+
+    fn tick(
+        &mut self,
+        input: &Frame<Self::Sample, Self::Inputs>,
+    ) -> Frame<Self::Sample, Self::Outputs> {
+        (0..Self::Outputs::to_usize())
+            .map(|i| input[self.selected[i]])
+            .collect()
     }
 }

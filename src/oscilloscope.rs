@@ -148,7 +148,7 @@ impl ChannelData {
     }
 }
 
-pub fn draw_oscilloscope(mut daw: DAW, sample_rate: f64, file_path: PathBuf) {
+pub fn launch_app(mut daw: DAW, sample_rate: f64, file_path: PathBuf) {
     let render = render_daw(&mut daw, sample_rate);
 
     let y_fac = 1.0 / (daw.channel_count + 1) as f64;
