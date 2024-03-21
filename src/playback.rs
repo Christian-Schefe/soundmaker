@@ -1,13 +1,20 @@
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, Stream};
 use fundsp::prelude::AudioNode;
 use fundsp::wave::{Wave64, Wave64Player};
 
-pub fn play_and_save(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration, file_path: PathBuf) -> Result<(), anyhow::Error> {
+pub fn play_and_save(
+    data: Vec<(f64, f64)>,
+    sample_rate: f64,
+    duration: Duration,
+    file_path: PathBuf,
+    callback: Option<Sender<Instant>>,
+) -> Result<(), anyhow::Error> {
     let mut wave = Wave64::new(0, sample_rate);
     let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
 
@@ -20,11 +27,14 @@ pub fn play_and_save(data: Vec<(f64, f64)>, sample_rate: f64, duration: Duration
 
     let player = Wave64Player::new(&arc, 0, 0, len, None);
     arc.save_wav32(file_path)?;
-    play_sound(player, duration)?;
-    Ok(())
+    play_sound(player, duration, callback)
 }
 
-pub fn play_sound<T>(mut sound: T, duration: Duration) -> Result<(), anyhow::Error>
+pub fn play_sound<T>(
+    mut sound: T,
+    duration: Duration,
+    callback: Option<Sender<Instant>>,
+) -> Result<(), anyhow::Error>
 where
     T: AudioNode<Sample = f64> + 'static,
 {
@@ -45,6 +55,10 @@ where
     }?;
 
     stream.play()?;
+    let start = Instant::now();
+    if let Some(sender) = callback {
+        sender.send(start).unwrap();
+    }
     std::thread::sleep(duration);
     Ok(())
 }

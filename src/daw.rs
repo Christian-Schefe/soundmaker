@@ -1,19 +1,15 @@
 use std::ops::Index;
 use std::ops::IndexMut;
 use std::time::Duration;
+use std::time::Instant;
 
 use fundsp::prelude::*;
 use midly::Smf;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
 
-pub use self::midi::*;
-pub use self::processor::*;
-pub use self::render::*;
-pub use self::synthesizer::*;
-
-mod midi;
-mod processor;
-mod render;
-mod synthesizer;
+use crate::prelude::*;
 
 #[derive(Clone)]
 pub struct DAW {
@@ -58,6 +54,10 @@ impl DAW {
 
             channel.synth.set_midi(track);
         }
+    }
+    pub fn set_midi_bytes(&mut self, bytes: &[u8]) {
+        let smf = Smf::parse(bytes).unwrap();
+        self.set_midi(smf);
     }
     pub fn add_instrument(
         &mut self,
@@ -226,4 +226,69 @@ impl SynthChannel {
         let input = self.synth.tick(time);
         self.channel.tick(&input)
     }
+}
+
+pub struct RenderedAudio {
+    pub master: Vec<(f64, f64)>,
+    pub channels: Vec<Vec<(f64, f64)>>,
+}
+
+pub fn render_daw(daw: &mut DAW, sample_rate: f64) -> RenderedAudio {
+    let start_time = Instant::now();
+    println!("Started rendering...");
+    let sample_count = (daw.duration.as_secs_f64() * sample_rate).round() as usize;
+    let channels: Vec<Vec<(f64, f64)>> = daw
+        .channels
+        .par_iter_mut()
+        .map(|x| {
+            let render = render_channel(x, sample_count, sample_rate);
+            render
+        })
+        .collect();
+
+    let master = render_master(&mut daw.master, &channels, sample_count);
+    println!(
+        "Finished rendering in {:.2} seconds.",
+        start_time.elapsed().as_secs_f64()
+    );
+    RenderedAudio { master, channels }
+}
+
+fn render_master(
+    master: &mut Channel,
+    channels: &[Vec<(f64, f64)>],
+    sample_count: usize,
+) -> Vec<(f64, f64)> {
+    (0..sample_count)
+        .into_par_iter()
+        .map(|x| {
+            channels
+                .iter()
+                .map(|vec| vec[x])
+                .fold((0.0, 0.0), |acc, x| (acc.0 + x.0, acc.1 + x.1))
+        })
+        .collect::<Vec<(f64, f64)>>()
+        .into_iter()
+        .map(|x| {
+            let input = [x.0, x.1].into();
+            let output = master.tick(&input);
+            (output[0], output[1])
+        })
+        .collect()
+}
+
+fn render_channel(
+    channel: &mut SynthChannel,
+    sample_count: usize,
+    sample_rate: f64,
+) -> Vec<(f64, f64)> {
+    let mut samples = Vec::with_capacity(sample_count);
+
+    for i in 0..sample_count {
+        let time = i as f64 / sample_rate;
+        let sample = channel.tick(time);
+        samples.push((sample[0], sample[1]))
+    }
+
+    samples
 }

@@ -3,10 +3,12 @@ use std::marker::PhantomData;
 use fundsp::prelude::*;
 
 pub mod daw;
-pub mod oscilloscope;
 pub mod playback;
 pub mod prelude;
 pub mod score;
+pub mod midi;
+pub mod processor;
+pub mod synthesizer;
 
 /// A better ADSR envelope implementation that doesn't use shared variables.
 /// It prevents abrupt changes in the output when the control signal changes.

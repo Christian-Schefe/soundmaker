@@ -3,10 +3,7 @@ use fundsp::prelude::*;
 
 use crate::prelude::{make_adsr, select, EQ};
 
-use super::{
-    midi::{MidiMsg, MidiWrapper},
-    Processor,
-};
+use crate::prelude::*;
 
 /// A synthesizer is a node that takes MIDI messages and produces audio.
 /// A simple implementation is provided as `SimpleSynth`, but you can create your own.
