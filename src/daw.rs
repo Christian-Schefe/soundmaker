@@ -147,10 +147,18 @@ impl AudioNode for DAW {
 
     fn reset(&mut self) {
         self.time = 0.0;
+        for channel in self.channels.iter_mut() {
+            channel.reset();
+        }
+        self.master.reset();
     }
 
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.delta_time = 1.0 / sample_rate;
+        for channel in self.channels.iter_mut() {
+            channel.set_sample_rate(sample_rate);
+        }
+        self.master.set_sample_rate(sample_rate);
     }
 }
 
@@ -196,6 +204,16 @@ impl Channel {
     {
         self.processors.push(Box::new(processor))
     }
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        for processor in self.processors.iter_mut() {
+            processor.set_sample_rate(sample_rate);
+        }
+    }
+    fn reset(&mut self) {
+        for processor in self.processors.iter_mut() {
+            processor.reset();
+        }
+    }
 }
 
 impl Index<usize> for Channel {
@@ -226,6 +244,14 @@ impl SynthChannel {
         let input = self.synth.tick(time);
         self.channel.tick(&input)
     }
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.channel.set_sample_rate(sample_rate);
+        self.synth.set_sample_rate(sample_rate);
+    }
+    fn reset(&mut self) {
+        self.channel.reset();
+        self.synth.reset();
+    }
 }
 
 pub struct RenderedAudio {
@@ -234,6 +260,8 @@ pub struct RenderedAudio {
 }
 
 pub fn render_daw(daw: &mut DAW, sample_rate: f64) -> RenderedAudio {
+    daw.set_sample_rate(sample_rate);
+    daw.reset();
     let start_time = Instant::now();
     println!("Started rendering...");
     let sample_count = (daw.duration.as_secs_f64() * sample_rate).round() as usize;

@@ -61,6 +61,10 @@ impl MidiWrapper {
 
         (dropped_notes, new_notes)
     }
+    pub fn reset(&mut self) {
+        self.msg_index = 0;
+        self.current_tempo = (0, 0.0, 480.0);
+    }
 }
 
 #[derive(Clone, Debug, Copy)]

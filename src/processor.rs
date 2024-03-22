@@ -3,6 +3,8 @@ use fundsp::prelude::*;
 
 pub trait Processor: DynClone + Send + Sync {
     fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2>;
+    fn set_sample_rate(&mut self, _sample_rate: f64) {}
+    fn reset(&mut self) {}
 }
 
 clone_trait_object!(Processor);

@@ -1,19 +1,19 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, Stream};
-use fundsp::prelude::AudioNode;
-use fundsp::wave::{Wave64, Wave64Player};
+use fundsp::prelude::*;
+use fundsp::wave::Wave64;
+
+pub use fundsp::prelude::Shared;
 
 pub fn play_and_save(
     data: Vec<(f64, f64)>,
     sample_rate: f64,
-    duration: Duration,
     file_path: PathBuf,
-    callback: Option<Sender<Instant>>,
+    tx: Sender<(Instant, (Shared<f32>, Shared<f64>))>,
 ) -> Result<(), anyhow::Error> {
     let mut wave = Wave64::new(0, sample_rate);
     let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
@@ -21,20 +21,21 @@ pub fn play_and_save(
     wave.push_channel(&left_channel);
     wave.push_channel(&right_channel);
 
-    let len = wave.len();
+    wave.save_wav32(file_path)?;
+    let player = WavePlayback::new(wave);
+    let controls = (player.is_paused.clone(), player.set_time.clone());
 
-    let arc = Arc::new(wave);
+    let stream = get_stream(player.clone())?;
+    stream.play()?;
 
-    let player = Wave64Player::new(&arc, 0, 0, len, None);
-    arc.save_wav32(file_path)?;
-    play_sound(player, duration, callback)
+    tx.send((Instant::now(), controls)).unwrap();
+
+    while !player.is_finished() {}
+
+    Ok(())
 }
 
-pub fn play_sound<T>(
-    mut sound: T,
-    duration: Duration,
-    callback: Option<Sender<Instant>>,
-) -> Result<(), anyhow::Error>
+pub fn get_stream<T>(mut sound: T) -> Result<Stream, anyhow::Error>
 where
     T: AudioNode<Sample = f64> + 'static,
 {
@@ -54,13 +55,7 @@ where
         _ => panic!("Unsupported format"),
     }?;
 
-    stream.play()?;
-    let start = Instant::now();
-    if let Some(sender) = callback {
-        sender.send(start).unwrap();
-    }
-    std::thread::sleep(duration);
-    Ok(())
+    Ok(stream)
 }
 
 fn run<T, Q>(
@@ -107,5 +102,67 @@ where
                 *sample = right;
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct WavePlayback {
+    wave: Wave64,
+    is_paused: Shared<f32>, // positive = playing, negative = paused
+    set_time: Shared<f64>,  // if positive, set time to this value, then set to -1.0
+    current_index: usize,
+    current_time: f64,
+    delta_time: f64,
+}
+
+impl WavePlayback {
+    pub fn new(wave: Wave64) -> Self {
+        let sample_rate = wave.sample_rate();
+        Self {
+            wave,
+            is_paused: Shared::new(1.0),
+            set_time: Shared::new(-1.0),
+            current_index: 0,
+            current_time: 0.0,
+            delta_time: 1.0 / sample_rate,
+        }
+    }
+    fn is_finished(&self) -> bool {
+        false
+    }
+}
+
+impl AudioNode for WavePlayback {
+    const ID: u64 = 0x54C1D;
+    type Sample = f64;
+    type Inputs = U0;
+    type Outputs = U2;
+    type Setting = ();
+
+    fn tick(
+        &mut self,
+        _input: &Frame<Self::Sample, Self::Inputs>,
+    ) -> Frame<Self::Sample, Self::Outputs> {
+        if self.is_paused.value() < 0.0 {
+            return [0.0, 0.0].into();
+        }
+        if self.set_time.value() >= 0.0 {
+            self.current_time = self.set_time.value();
+            self.current_index = (self.current_time * self.wave.sample_rate()) as usize;
+            self.set_time.set_value(-1.0);
+        }
+
+        let left = self.wave.at(0, self.current_index);
+        let right = self.wave.at(1, self.current_index);
+        self.current_index += 1;
+        self.current_time += self.delta_time;
+
+        [left, right].into()
+    }
+
+    fn reset(&mut self) {
+        self.current_index = 0;
+        self.is_paused.set_value(1.0);
+        self.set_time.set_value(-1.0);
     }
 }

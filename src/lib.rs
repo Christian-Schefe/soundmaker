@@ -9,6 +9,7 @@ pub mod score;
 pub mod midi;
 pub mod processor;
 pub mod synthesizer;
+pub mod instrument;
 
 /// A better ADSR envelope implementation that doesn't use shared variables.
 /// It prevents abrupt changes in the output when the control signal changes.

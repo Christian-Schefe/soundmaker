@@ -4,6 +4,7 @@ pub use crate::score::*;
 pub use crate::midi::*;
 pub use crate::processor::*;
 pub use crate::synthesizer::*;
+pub use crate::instrument::*;
 
 use crate::Selector;
 use crate::ADSR;
@@ -31,7 +32,7 @@ pub fn piano() -> Piano {
 }
 
 pub fn flute() -> Flute {
-    let envelope = (0.1, 1.0, 0.8, 0.5);
+    let envelope = (0.03, 1.0, 0.8, 0.3);
     let vibrato = Vibrato::new(0.004, envelope, 5.0, envelope);
     Flute::new(vibrato, envelope)
 }
