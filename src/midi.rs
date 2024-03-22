@@ -4,6 +4,7 @@ use midly::MetaMessage;
 use midly::MidiMessage;
 use midly::Smf;
 use midly::Track;
+use midly::TrackEvent;
 use midly::TrackEventKind;
 
 #[derive(Clone)]
@@ -168,6 +169,15 @@ impl MidiMsg {
         time += time_to_end;
 
         Duration::from_secs_f64(time)
+    }
+
+    pub fn extract_track_name(track: &[TrackEvent]) -> String {
+        for msg in track {
+            if let TrackEventKind::Meta(MetaMessage::TrackName(name)) = msg.kind {
+                return String::from_utf8_lossy(name).to_string();
+            }
+        }
+        "Unnamed".to_string()
     }
 }
 

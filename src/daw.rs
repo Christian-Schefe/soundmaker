@@ -39,6 +39,12 @@ impl DAW {
             self.channel_count
         );
 
+        let track_names = midi
+            .tracks
+            .iter()
+            .map(|x| MidiMsg::extract_track_name(x))
+            .collect::<Vec<String>>();
+
         let (fixed_midi, duration) = MidiMsg::convert_smf(midi);
         self.duration = duration + Duration::from_secs_f64(5.0);
         println!(
@@ -47,6 +53,11 @@ impl DAW {
         );
 
         for (i, channel) in self.channels.iter_mut().enumerate() {
+            if let Some(name) = track_names.get(i).cloned() {
+                println!("Channel {} has name: {}", i, name);
+                channel.channel.name = name;
+            }
+
             let track = fixed_midi
                 .get(i)
                 .map(|x| x.iter().copied().collect())

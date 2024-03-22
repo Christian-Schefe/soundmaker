@@ -13,7 +13,7 @@ pub fn play_and_save(
     data: Vec<(f64, f64)>,
     sample_rate: f64,
     file_path: PathBuf,
-    tx: Sender<(Instant, (Shared<f32>, Shared<f64>))>,
+    tx: Sender<(Instant, (Shared<f32>, Shared<f64>, Shared<f64>))>,
 ) -> Result<(), anyhow::Error> {
     let mut wave = Wave64::new(0, sample_rate);
     let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
@@ -23,7 +23,11 @@ pub fn play_and_save(
 
     wave.save_wav32(file_path)?;
     let player = WavePlayback::new(wave);
-    let controls = (player.is_paused.clone(), player.set_time.clone());
+    let controls = (
+        player.is_paused.clone(),
+        player.set_time.clone(),
+        player.volume.clone(),
+    );
 
     let stream = get_stream(player.clone())?;
     stream.play()?;
@@ -110,6 +114,7 @@ pub struct WavePlayback {
     wave: Wave64,
     is_paused: Shared<f32>, // positive = playing, negative = paused
     set_time: Shared<f64>,  // if positive, set time to this value, then set to -1.0
+    volume: Shared<f64>,
     current_index: usize,
     current_time: f64,
     delta_time: f64,
@@ -122,6 +127,7 @@ impl WavePlayback {
             wave,
             is_paused: Shared::new(1.0),
             set_time: Shared::new(-1.0),
+            volume: Shared::new(1.0),
             current_index: 0,
             current_time: 0.0,
             delta_time: 1.0 / sample_rate,
@@ -152,10 +158,15 @@ impl AudioNode for WavePlayback {
             self.set_time.set_value(-1.0);
         }
 
-        let left = self.wave.at(0, self.current_index);
-        let right = self.wave.at(1, self.current_index);
-        self.current_index += 1;
-        self.current_time += self.delta_time;
+        let vol = self.volume.value();
+
+        let left = self.wave.at(0, self.current_index) * vol;
+        let right = self.wave.at(1, self.current_index) * vol;
+
+        if self.current_index + 1 < self.wave.len() {
+            self.current_index += 1;
+            self.current_time += self.delta_time;
+        }
 
         [left, right].into()
     }

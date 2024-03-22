@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use dyn_clone::{clone_trait_object, DynClone};
 use fundsp::prelude::*;
+use rand::prelude::*;
 
 /// A synthesizer is a node that takes MIDI messages and produces audio.
 /// A simple implementation is provided as `SimpleSynth`, but you can create your own.
@@ -45,6 +46,8 @@ pub struct SimpleSynth {
     voices: Vec<Box<dyn AudioUnit64>>,
     last_notes: Vec<(u8, f64, bool)>,
     voice_index: usize,
+    detunes: Vec<f64>,
+    rng: StdRng,
 }
 
 impl SimpleSynth {
@@ -54,6 +57,8 @@ impl SimpleSynth {
             voices: vec![node; voices],
             last_notes: vec![(0, 0.0, false); voices],
             voice_index: 0,
+            detunes: vec![0.0; voices],
+            rng: StdRng::seed_from_u64(0),
         }
     }
     pub fn boxed(voices: usize, node: Box<dyn AudioUnit64>) -> Box<Self> {
@@ -72,6 +77,7 @@ impl SimpleSynth {
             self.voices[self.voice_index].reset();
             self.last_notes[self.voice_index] = (note.0, note.1, true);
             self.voice_index = (self.voice_index + 1) % self.voices.len();
+            self.detunes[self.voice_index] = self.rng.gen_range(-0.004..0.004);
         }
     }
 }
@@ -91,7 +97,7 @@ impl Synthesizer for SimpleSynth {
             let voice = &mut self.voices[i];
             let data = self.last_notes[i];
             let input = [
-                midi_hz(data.0 as f64),
+                midi_hz(data.0 as f64) * (1.0 + self.detunes[i]),
                 data.1,
                 if data.2 { 1.0 } else { -1.0 },
             ];

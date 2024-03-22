@@ -1,15 +1,16 @@
+use rand::prelude::*;
 use std::marker::PhantomData;
 
 use fundsp::prelude::*;
 
 pub mod daw;
+pub mod instrument;
+pub mod midi;
 pub mod playback;
 pub mod prelude;
-pub mod score;
-pub mod midi;
 pub mod processor;
+pub mod score;
 pub mod synthesizer;
-pub mod instrument;
 
 /// A better ADSR envelope implementation that doesn't use shared variables.
 /// It prevents abrupt changes in the output when the control signal changes.
@@ -162,5 +163,43 @@ where
         (0..Self::Outputs::to_usize())
             .map(|i| input[self.selected[i]])
             .collect()
+    }
+}
+
+/// A node that generates a random number between 0.0 and 1.0 when triggered by a control signal.
+/// Each time the control signal goes from negative or zero to positive, a new random number is generated.
+#[derive(Clone)]
+pub struct Rand {
+    rng: StdRng,
+    last_control: f64,
+    rand_val: f64,
+}
+
+impl Rand {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: SeedableRng::seed_from_u64(seed),
+            last_control: -1.0,
+            rand_val: 0.0,
+        }
+    }
+}
+
+impl AudioNode for Rand {
+    const ID: u64 = 0x1234ACB23;
+    type Sample = f64;
+    type Inputs = U1;
+    type Outputs = U1;
+    type Setting = ();
+    fn tick(
+        &mut self,
+        input: &Frame<Self::Sample, Self::Inputs>,
+    ) -> Frame<Self::Sample, Self::Outputs> {
+        if input[0] <= 0.0 && self.last_control > 0.0 {
+            self.rand_val = self.rng.gen::<f64>();
+        }
+        self.last_control = input[0];
+
+        [self.rand_val].into()
     }
 }
