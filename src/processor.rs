@@ -2,7 +2,7 @@ use dyn_clone::{clone_trait_object, DynClone};
 use fundsp::prelude::*;
 
 pub trait Processor: DynClone + Send + Sync {
-    fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2>;
+    fn tick(&mut self, time: f64, input: &Frame<f64, U2>) -> Frame<f64, U2>;
     fn set_sample_rate(&mut self, _sample_rate: f64) {}
     fn reset(&mut self) {}
 }
@@ -36,7 +36,7 @@ impl EQ {
 }
 
 impl Processor for EQ {
-    fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
+    fn tick(&mut self, _time: f64, input: &Frame<f64, U2>) -> Frame<f64, U2> {
         let low_in = [
             input[0],
             self.lowpass.0,
@@ -58,6 +58,17 @@ impl Processor for EQ {
         ];
         self.highpass_node.tick(&high_in, &mut output);
 
+        output.into()
+    }
+}
+
+impl<T> Processor for T
+where
+    T: AudioUnit64,
+{
+    fn tick(&mut self, _time: f64, input: &Frame<f64, U2>) -> Frame<f64, U2> {
+        let mut output = [0.0, 0.0];
+        self.tick(input, &mut output);
         output.into()
     }
 }

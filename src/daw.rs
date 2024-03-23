@@ -198,11 +198,11 @@ impl Channel {
             name,
         }
     }
-    fn tick(&mut self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
+    fn tick(&mut self, time: f64, input: &Frame<f64, U2>) -> Frame<f64, U2> {
         let adjusted = self.volume_pan(input);
         self.processors
             .iter_mut()
-            .fold(adjusted, |acc, x| x.tick(&acc))
+            .fold(adjusted, |acc, x| x.tick(time, &acc))
     }
     fn volume_pan(&self, input: &Frame<f64, U2>) -> Frame<f64, U2> {
         let left_vol = self.volume * (1.0 - self.pan).clamp(0.0, 1.0);
@@ -253,7 +253,7 @@ impl SynthChannel {
     }
     fn tick(&mut self, time: f64) -> Frame<f64, U2> {
         let input = self.synth.tick(time);
-        self.channel.tick(&input)
+        self.channel.tick(time, &input)
     }
     fn set_sample_rate(&mut self, sample_rate: f64) {
         self.channel.set_sample_rate(sample_rate);
@@ -285,7 +285,7 @@ pub fn render_daw(daw: &mut DAW, sample_rate: f64) -> RenderedAudio {
         })
         .collect();
 
-    let master = render_master(&mut daw.master, &channels, sample_count);
+    let master = render_master(&mut daw.master, &channels, sample_count, sample_rate);
     println!(
         "Finished rendering in {:.2} seconds.",
         start_time.elapsed().as_secs_f64()
@@ -297,20 +297,27 @@ fn render_master(
     master: &mut Channel,
     channels: &[Vec<(f64, f64)>],
     sample_count: usize,
+    sample_rate: f64,
 ) -> Vec<(f64, f64)> {
+    let delta_time = 1.0 / sample_rate;
+
     (0..sample_count)
         .into_par_iter()
         .map(|x| {
-            channels
-                .iter()
-                .map(|vec| vec[x])
-                .fold((0.0, 0.0), |acc, x| (acc.0 + x.0, acc.1 + x.1))
+            let time = x as f64 * delta_time;
+            (
+                time,
+                channels
+                    .iter()
+                    .map(|vec| vec[x])
+                    .fold((0.0, 0.0), |acc, x| (acc.0 + x.0, acc.1 + x.1)),
+            )
         })
-        .collect::<Vec<(f64, f64)>>()
+        .collect::<Vec<(f64, (f64, f64))>>()
         .into_iter()
-        .map(|x| {
+        .map(|(time, x)| {
             let input = [x.0, x.1].into();
-            let output = master.tick(&input);
+            let output = master.tick(time, &input);
             (output[0], output[1])
         })
         .collect()
@@ -322,9 +329,10 @@ fn render_channel(
     sample_rate: f64,
 ) -> Vec<(f64, f64)> {
     let mut samples = Vec::with_capacity(sample_count);
+    let delta_time = 1.0 / sample_rate;
 
     for i in 0..sample_count {
-        let time = i as f64 / sample_rate;
+        let time = i as f64 * delta_time;
         let sample = channel.tick(time);
         samples.push((sample[0], sample[1]))
     }
