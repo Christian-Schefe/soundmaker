@@ -9,6 +9,20 @@ pub trait MidiInstrument: DynClone + Send + Sync {
 
 clone_trait_object!(MidiInstrument);
 
+impl<T> MidiInstrument for T
+where
+    T: Synthesizer + Clone + 'static,
+{
+    fn build_synth(&self) -> Box<dyn Synthesizer> {
+        let synth = self.clone();
+        Box::new(synth)
+    }
+
+    fn build_processors(&self) -> Vec<Box<dyn Processor>> {
+        Vec::new()
+    }
+}
+
 #[derive(Clone)]
 pub struct Vibrato {
     pub strength: f64,

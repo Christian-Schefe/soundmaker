@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, Stream};
@@ -35,6 +35,31 @@ pub fn play_and_save(
     tx.send((Instant::now(), controls)).unwrap();
 
     while !player.is_finished() {}
+
+    Ok(())
+}
+
+pub fn play_to_end(
+    data: Vec<(f64, f64)>,
+    sample_rate: f64,
+    file_path: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    let mut wave = Wave64::new(0, sample_rate);
+    let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
+
+    wave.push_channel(&left_channel);
+    wave.push_channel(&right_channel);
+
+    let duration = wave.duration();
+
+    if let Some(path) = file_path {
+        wave.save_wav32(path)?;
+    }
+    let player = WavePlayback::new(wave);
+    let stream = get_stream(player.clone())?;
+    stream.play()?;
+
+    std::thread::sleep(Duration::from_secs_f64(duration));
 
     Ok(())
 }
