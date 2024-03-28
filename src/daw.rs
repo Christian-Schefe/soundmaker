@@ -9,6 +9,8 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 
+use serde::{Deserialize, Serialize};
+
 use crate::prelude::*;
 
 #[derive(Clone)]
@@ -265,9 +267,46 @@ impl SynthChannel {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct RenderedAudio {
     pub master: Vec<(f64, f64)>,
     pub channels: Vec<Vec<(f64, f64)>>,
+}
+
+impl RenderedAudio {
+    pub fn save<P>(&self, path: P) -> Result<(), anyhow::Error>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let data = bincode::serialize(self)?;
+        std::fs::write(path, data)?;
+        Ok(())
+    }
+    pub fn load<P>(path: P) -> Result<Self, anyhow::Error>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let data = std::fs::read(path)?;
+        let audio = bincode::deserialize(&data)?;
+        Ok(audio)
+    }
+    pub fn master_wave(self, sample_rate: f64, normalize: bool) -> Wave64 {
+        let mut wave = Wave64::new(0, sample_rate);
+        let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = self.master.into_iter().unzip();
+
+        wave.push_channel(&left_channel);
+        wave.push_channel(&right_channel);
+        if normalize {
+            let max = wave.amplitude();
+            println!("Max amplitude: {}", max);
+
+            wave.channels_mut()
+                .iter_mut()
+                .for_each(|x| x.iter_mut().for_each(|y| *y /= max));
+        }
+
+        wave
+    }
 }
 
 pub fn render_daw(daw: &mut DAW, sample_rate: f64) -> RenderedAudio {

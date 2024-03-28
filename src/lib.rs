@@ -6,6 +6,7 @@ use fundsp::prelude::*;
 pub mod daw;
 pub mod instrument;
 pub mod midi;
+pub mod percussion;
 pub mod playback;
 pub mod prelude;
 pub mod processor;

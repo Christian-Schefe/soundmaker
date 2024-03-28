@@ -5,6 +5,7 @@ pub use crate::playback::*;
 pub use crate::processor::*;
 pub use crate::score::*;
 pub use crate::synthesizer::*;
+pub use crate::percussion::*;
 
 use crate::Selector;
 use crate::ADSR;

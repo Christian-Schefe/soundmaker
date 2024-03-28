@@ -9,6 +9,15 @@ use fundsp::wave::Wave64;
 
 pub use fundsp::prelude::Shared;
 
+pub fn find_sample_rate() -> f64 {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .expect("No default output device");
+    let config = device.default_output_config().unwrap();
+    config.sample_rate().0 as f64
+}
+
 pub fn play_and_save(
     data: Vec<(f64, f64)>,
     sample_rate: f64,
@@ -39,22 +48,9 @@ pub fn play_and_save(
     Ok(())
 }
 
-pub fn play_to_end(
-    data: Vec<(f64, f64)>,
-    sample_rate: f64,
-    file_path: Option<PathBuf>,
-) -> Result<(), anyhow::Error> {
-    let mut wave = Wave64::new(0, sample_rate);
-    let (left_channel, right_channel): (Vec<f64>, Vec<f64>) = data.into_iter().unzip();
-
-    wave.push_channel(&left_channel);
-    wave.push_channel(&right_channel);
-
+pub fn play_wave(wave: Wave64) -> Result<(), anyhow::Error> {
     let duration = wave.duration();
 
-    if let Some(path) = file_path {
-        wave.save_wav32(path)?;
-    }
     let player = WavePlayback::new(wave);
     let stream = get_stream(player.clone())?;
     stream.play()?;
