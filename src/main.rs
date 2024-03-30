@@ -15,11 +15,11 @@ fn main() {
         Percussion::Shaker(70, 1.0),
     ]);
 
-    daw.add_instrument("Flute".to_string(), &flute, 2.0, 0.0);
+    daw.add_instrument("Flute".to_string(), &flute, 1.0, 0.0);
     daw.add_instrument("Percussion 1".to_string(), percussion.as_ref(), 1.0, 0.0);
     daw.add_instrument("Percussion 2".to_string(), percussion.as_ref(), 1.0, 0.0);
-    daw.add_instrument("Viola".to_string(), &violin, 2.0, 0.0);
-    daw.add_instrument("Cello".to_string(), &violin, 2.0, 0.0);
+    daw.add_instrument("Viola".to_string(), &violin, 1.0, 0.0);
+    daw.add_instrument("Cello".to_string(), &violin, 1.0, 0.0);
 
     daw.set_midi_bytes(&midi);
 

@@ -28,7 +28,6 @@ impl PercussionSynth {
                 self.samples[i].1.reset();
                 self.samples[i].2 = note.1
             }
-            println!("{:?}", note);
         }
     }
 }

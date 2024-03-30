@@ -297,15 +297,29 @@ impl RenderedAudio {
         wave.push_channel(&left_channel);
         wave.push_channel(&right_channel);
         if normalize {
-            let max = wave.amplitude();
+            let max = Self::determine_amplitude(&wave, 5);
             println!("Max amplitude: {}", max);
 
             wave.channels_mut()
                 .iter_mut()
-                .for_each(|x| x.iter_mut().for_each(|y| *y /= max));
+                .for_each(|x| x.iter_mut().for_each(|y| *y = (*y / max).clamp(-1.0, 1.0)));
         }
 
         wave
+    }
+    fn determine_amplitude(wave: &Wave64, window_size: usize) -> f64 {
+        let mut peak = 0.0;
+        for channel in 0..wave.channels() {
+            for window in (0..wave.len()).collect::<Vec<usize>>().windows(window_size) {
+                let avg = window
+                    .iter()
+                    .map(|i| abs(wave.at(channel, *i)))
+                    .sum::<f64>()
+                    / window.len() as f64;
+                peak = max(peak, avg);
+            }
+        }
+        peak
     }
 }
 

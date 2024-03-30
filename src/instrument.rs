@@ -26,27 +26,24 @@ where
 #[derive(Clone)]
 pub struct Vibrato {
     pub strength: f64,
-    pub strength_envelope: (f64, f64, f64, f64),
     pub frequency: f64,
-    pub freq_envelope: (f64, f64, f64, f64),
+    pub envelope: (f64, f64, f64, f64),
 }
 
 impl Vibrato {
     pub fn new(
         strength: f64,
-        strength_envelope: (f64, f64, f64, f64),
         frequency: f64,
         freq_envelope: (f64, f64, f64, f64),
     ) -> Self {
         Self {
             strength,
-            strength_envelope,
             frequency,
-            freq_envelope,
+            envelope: freq_envelope,
         }
     }
     pub fn build(&self) -> An<impl AudioNode<Sample = f64, Inputs = U2, Outputs = U1>> {
-        let freq_envelope = pass() | make_adsr(self.freq_envelope);
+        let freq_envelope = pass() | make_adsr(self.envelope);
         let freq_graph = freq_envelope
             >> pass()
                 * (1.0
@@ -81,7 +78,7 @@ impl MidiInstrument for Violin {
     }
 
     fn build_processors(&self) -> Vec<Box<dyn Processor>> {
-        vec![EQ::boxed((8000.0, 0.1), (200.0, 0.5))]
+        vec![EQ::boxed((8000.0, 0.1), (200.0, 0.5)), gain(2.0)]
     }
 }
 
@@ -107,7 +104,7 @@ impl MidiInstrument for Piano {
     }
 
     fn build_processors(&self) -> Vec<Box<dyn Processor>> {
-        vec![EQ::boxed((5000.0, 0.1), (200.0, 0.5))]
+        vec![EQ::boxed((5000.0, 0.1), (200.0, 0.5)), gain(2.0)]
     }
 }
 
@@ -125,7 +122,7 @@ impl Flute {
 
 impl MidiInstrument for Flute {
     fn build_synth(&self) -> Box<dyn Synthesizer> {
-        let signal = triangle() * 0.7 & sine() * 0.25 & square() * 0.05;
+        let signal = triangle() * 0.8 & sine() * 0.2;
 
         let freq_graph = select([0, 2]) >> self.vibrato.build() >> signal;
         let graph = freq_graph ^ (sink() | pass() * make_adsr(self.envelope));
@@ -135,7 +132,7 @@ impl MidiInstrument for Flute {
     }
 
     fn build_processors(&self) -> Vec<Box<dyn Processor>> {
-        vec![EQ::boxed((8000.0, 0.1), (200.0, 0.5))]
+        vec![EQ::boxed((12000.0, 0.1), (400.0, 0.5)), gain(2.0)]
     }
 }
 
